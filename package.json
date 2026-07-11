@@ -1,0 +1,21 @@
+{
+  "name": "resonance-neurofeedback",
+  "private": true,
+  "version": "1.1.0",
+  "description": "A browser-based simulated and Muse 2 EEG neurofeedback trainer.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "muse-js": "3.3.0"
+  },
+  "devDependencies": {
+    "vite": "8.1.4"
+  }
+}

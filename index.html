@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Resonance is an interactive simulated EEG lab. Explore brainwave protocols and a three-frequency resonance feedback loop in your browser.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%A0%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.24.0/dist/tabler-icons.min.css">
+<title>Resonance &mdash; neurofeedback trainer</title>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#0B0E14; --bg2:#0f131c; --panel:#141922; --panel2:#1a212d;
+    --line:#232c3a; --line2:#2f3a4c;
+    --txt:#E6ECF2; --txt2:#93a1b5; --txt3:#5d6b80;
+    --mint:#4FE0B0; --mint-dim:#2b8f74; --amber:#F2B25C;
+    --delta:#7C6BF0; --theta:#B06CE0; --alpha:#4FE0B0; --beta:#4FB8E0; --gamma:#F07C7C;
+    --mono:ui-monospace,"SF Mono",Menlo,"Cascadia Mono",monospace;
+    --sans:"Space Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--txt);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;overflow-x:hidden}
+  body{background:radial-gradient(ellipse 120% 80% at 50% -10%,#121a26 0%,var(--bg) 55%);min-height:100vh}
+  .wrap{max-width:1240px;margin:0 auto;padding:32px}
+
+  header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px}
+  .brand{display:flex;align-items:center;gap:12px}
+  .dot{width:11px;height:11px;border-radius:50%;background:var(--txt3);transition:.3s;flex:none}
+  body.live .dot{background:var(--mint);box-shadow:0 0 14px 2px rgba(79,224,176,.6);animation:pulse 1.6s ease-in-out infinite}
+  @keyframes pulse{50%{box-shadow:0 0 20px 4px rgba(79,224,176,.35)}}
+  h1{font-size:clamp(18px,2.4vw,24px);font-weight:600;letter-spacing:-.01em}
+  h1 span{color:var(--txt3);font-weight:400}
+  .tag{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt3)}
+
+  .src{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--amber);border:1px solid rgba(242,178,92,.3);border-radius:999px;padding:5px 12px}
+  .src.hw{color:var(--mint);border-color:var(--mint-dim)}
+  .src .sd{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+
+  .modebar{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+  .mode{flex:1;min-width:180px;background:var(--bg2);border:1px solid var(--line);border-radius:13px;
+    padding:13px 15px;cursor:pointer;transition:.16s;text-align:left;color:inherit;font-family:inherit}
+  .mode:hover{border-color:var(--line2)}
+  .mode.on{border-color:var(--mint);background:color-mix(in srgb,var(--mint) 10%,var(--bg2))}
+  .mode .mh{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14px}
+  .mode .mh i{font-size:17px;color:var(--txt2)}
+  .mode.on .mh i{color:var(--mint)}
+  .mode .md{font-size:11.5px;color:var(--txt2);margin-top:4px;line-height:1.35}
+
+  .grid{display:grid;grid-template-columns:270px 1fr;gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .card h2{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--txt3);
+    font-weight:500;font-family:var(--mono);margin-bottom:12px;display:flex;justify-content:space-between}
+  .card h2 .cnt{color:var(--mint)}
+
+  .bands{display:flex;flex-direction:column;gap:7px}
+  .band{display:flex;flex-direction:column;gap:5px;background:var(--bg2);border:1px solid var(--line);
+    border-radius:11px;padding:10px 12px;cursor:pointer;transition:.18s;position:relative;text-align:left;color:inherit;font-family:inherit}
+  .band:hover{border-color:var(--line2)}
+  .band.on{border-color:var(--bc);background:color-mix(in srgb,var(--bc) 13%,var(--bg2))}
+  .band .top{display:flex;align-items:center;justify-content:space-between}
+  .band .nm{font-weight:600;font-size:13.5px;text-transform:capitalize;display:flex;align-items:center;gap:8px}
+  .band .nm i{width:9px;height:9px;border-radius:2px;background:var(--bc)}
+  .band .hz{font-family:var(--mono);font-size:10px;color:var(--txt3)}
+  .band .desc{font-size:11px;color:var(--txt2);line-height:1.35}
+  .band .bar{height:3px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:2px}
+  .band .bar>i{display:block;height:100%;width:0;background:var(--bc);transition:width .12s linear}
+  .band.on::after{content:"training";position:absolute;top:9px;right:11px;font-family:var(--mono);
+    font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--bc)}
+  .band.on .hz{display:none}
+
+  .stage{display:flex;flex-direction:column;gap:16px}
+  .scope{position:relative;background:linear-gradient(180deg,#0c1119,#0a0d14);border:1px solid var(--line);
+    border-radius:16px;overflow:hidden;height:150px}
+  .scope canvas{display:block;width:100%;height:100%}
+  .scope .lbl{position:absolute;top:11px;left:14px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--txt3)}
+  .scope .now{position:absolute;top:11px;right:14px;font-family:var(--mono);font-size:11px;color:var(--txt2)}
+
+  .bloomcard{position:relative;background:radial-gradient(circle at 50% 45%,#0e1a1f,#0a0d14 70%);
+    border:1px solid var(--line);border-radius:16px;overflow:hidden;height:300px;
+    display:flex;align-items:center;justify-content:center}
+  .bloomcard canvas{position:absolute;inset:0;width:100%;height:100%}
+  .bloomcard .center{position:relative;text-align:center;z-index:2;pointer-events:none}
+  .score{font-family:var(--mono);font-size:clamp(40px,7vw,62px);font-weight:500;line-height:1;
+    color:var(--txt);text-shadow:0 0 24px rgba(79,224,176,.25);font-variant-numeric:tabular-nums}
+  .score.hot{color:var(--mint)}
+  .scorelbl{font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--txt3);margin-top:8px}
+  .cue{margin-top:14px;font-size:13px;color:var(--txt2);min-height:18px;transition:.3s;padding:0 16px}
+  .cue.hot{color:var(--mint)}
+  .stat{position:absolute;top:14px;font-family:var(--mono);font-size:11px;color:var(--txt3);z-index:2;font-variant-numeric:tabular-nums}
+  .stat.l{left:16px}.stat.r{right:16px;text-align:right}
+  .stat b{color:var(--txt2);font-weight:500}
+  .idlehint{position:absolute;bottom:16px;left:0;right:0;text-align:center;font-size:12px;color:var(--txt3);z-index:2;padding:0 16px}
+  body.live .idlehint{display:none}
+
+  .meters{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .meter{background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:11px 10px;position:relative;overflow:hidden;cursor:pointer;transition:.16s}
+  .meter:hover{border-color:var(--line2)}
+  .meter .mtop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .meter .mn{font-size:11px;font-weight:600;text-transform:capitalize;color:var(--txt2)}
+  .meter .mv{font-family:var(--mono);font-size:11px;color:var(--txt3);font-variant-numeric:tabular-nums}
+  .meter .track{height:46px;display:flex;align-items:flex-end;gap:2px}
+  .meter .track>i{flex:1;background:color-mix(in srgb,var(--mc) 55%,transparent);border-radius:1.5px 1.5px 0 0;
+    transition:height .1s linear;min-height:2px}
+  .meter.active{border-color:var(--mc);background:color-mix(in srgb,var(--mc) 8%,var(--bg2))}
+  .meter.active .mn{color:var(--mc)}
+
+  .progwrap{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px 16px}
+  .progwrap .ph{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .progwrap .pt{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--txt3)}
+  .progwrap .pk{font-family:var(--mono);font-size:11px;color:var(--txt2);font-variant-numeric:tabular-nums}
+  .prog{position:relative;height:88px}
+  .prog canvas{display:block;width:100%;height:100%}
+
+  .controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .btn{font-family:var(--sans);font-weight:600;font-size:14px;border-radius:12px;padding:13px 26px;cursor:pointer;
+    border:1px solid var(--line2);background:var(--panel2);color:var(--txt);transition:.16s;letter-spacing:.01em;display:inline-flex;align-items:center;gap:8px}
+  .btn:hover{border-color:var(--txt3)}
+  .btn.go{background:var(--mint);color:#062018;border-color:transparent;box-shadow:0 0 22px rgba(79,224,176,.28)}
+  .btn.go:hover{filter:brightness(1.06)}
+  body.live .btn.go{background:transparent;color:var(--txt);border-color:var(--line2);box-shadow:none}
+  .btn.ghost{background:transparent}
+  .btn i{font-size:17px}
+  .togs{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+  .tog{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt3);
+    border:1px solid var(--line);border-radius:9px;padding:9px 12px;cursor:pointer;user-select:none;transition:.16s;display:flex;align-items:center;gap:7px}
+  .tog .sw{width:8px;height:8px;border-radius:50%;background:var(--txt3);transition:.16s}
+  .tog.on{color:var(--mint);border-color:var(--mint-dim)}
+  .tog.on .sw{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+  .side{display:flex;flex-direction:column;gap:12px}
+  .states{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .statebtn,.chip{font-family:var(--sans);font-size:11px;color:var(--txt2);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px;cursor:pointer;transition:.16s}
+  .statebtn:hover,.chip:hover{border-color:var(--line2);color:var(--txt)}
+  .statebtn.on,.chip.on{color:var(--mint);border-color:var(--mint-dim);background:rgba(79,224,176,.07)}
+  .statebtn:last-child{grid-column:1/-1}
+  .sliderrow{margin-top:11px}
+  .sliderrow label{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--txt3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.08em}
+  input[type=range]{width:100%;accent-color:var(--mint);cursor:pointer}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-family:var(--mono);padding:7px 9px}
+  .calstate{font-family:var(--mono);font-size:10px;color:var(--txt3);line-height:1.55;border-top:1px solid var(--line);margin-top:12px;padding-top:11px}
+  .calstate b{color:var(--mint);font-weight:500}
+  .spectrum{position:relative;background:#0a0d14;border:1px solid var(--line);border-radius:16px;height:126px;overflow:hidden}
+  .spectrum canvas{width:100%;height:100%;display:block}
+  .spectrum .lbl{position:absolute;top:10px;left:13px;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:var(--txt3)}
+  .spectrum .scale{position:absolute;right:13px;top:10px;font-family:var(--mono);font-size:10px;color:var(--txt3)}
+  .btn.finish{display:none;background:transparent}
+  body.session .btn.finish{display:inline-flex}
+  .modal{position:fixed;inset:0;background:rgba(4,7,11,.82);backdrop-filter:blur(12px);z-index:20;display:none;align-items:center;justify-content:center}
+  .modal.show{display:flex}
+  .summary{width:520px;background:var(--panel);border:1px solid var(--line2);border-radius:20px;padding:26px;box-shadow:0 30px 90px rgba(0,0,0,.55)}
+  .summary h2{font-size:18px;font-weight:600;margin-bottom:6px}
+  .summary .sub{color:var(--txt2);font-size:12px;margin-bottom:20px}
+  .sumgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:20px}
+  .sumstat{background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:12px;text-align:center}
+  .sumstat b{display:block;font-family:var(--mono);font-size:20px;color:var(--mint);font-weight:500}
+  .sumstat span{font-family:var(--mono);font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.08em}
+  .summary .btn{width:100%;justify-content:center}
+  .muse-only{display:none}
+  body.muse-mode .muse-only{display:block}
+  body.muse-mode .sim-only{display:none}
+  .muse-status{display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg2);font-family:var(--mono);font-size:10px;color:var(--txt2);margin-bottom:10px}
+  .muse-status i{width:8px;height:8px;border-radius:50%;background:var(--txt3)}
+  .muse-status.connected i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+  .muse-actions{display:flex;gap:7px;margin-bottom:11px}
+  .muse-actions .btn{flex:1;justify-content:center;padding:10px 12px;font-size:12px}
+  .channels{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:10px}
+  .channel{border:1px solid var(--line);border-radius:7px;padding:7px 3px;text-align:center;font-family:var(--mono);font-size:9px;color:var(--txt3)}
+  .channel.live{color:var(--mint);border-color:var(--mint-dim);background:rgba(79,224,176,.06)}
+  .muse-meta{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--txt3);margin-top:10px}
+
+  .toast{position:absolute;left:50%;transform:translateX(-50%);top:14px;z-index:5;background:var(--panel2);
+    border:1px solid var(--line2);border-radius:10px;padding:9px 14px;font-size:12.5px;color:var(--txt);
+    opacity:0;pointer-events:none;transition:.25s;max-width:80%;text-align:center}
+  .toast.show{opacity:1}
+  .toast.err{border-color:#7a3b3b;color:#f0b4b4}
+
+  .foot{margin-top:22px;font-size:12px;color:var(--txt3);line-height:1.6;max-width:74ch}
+  .foot b{color:var(--txt2);font-weight:500}
+  .foot code{font-family:var(--mono);font-size:11px;color:var(--txt2);background:var(--bg2);padding:1px 6px;border-radius:5px}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap" style="position:relative">
+  <div class="toast" id="toast"></div>
+  <header>
+    <div class="brand">
+      <span class="dot"></span>
+      <div>
+        <h1>Resonance <span>&middot; neurofeedback trainer</span></h1>
+        <div class="tag">train a brainwave &middot; reward the state</div>
+      </div>
+    </div>
+    <span class="src" id="srcBadge"><span class="sd"></span><span id="srcTxt">simulated eeg</span></span>
+  </header>
+
+  <div class="modebar" id="modebar">
+    <button class="mode on" data-mode="single">
+      <div class="mh"><i class="ti ti-target"></i>Single band</div>
+      <div class="md">Choose one simulated brainwave and train it above baseline.</div>
+    </button>
+    <button class="mode" data-mode="resonate">
+      <div class="mh"><i class="ti ti-versions"></i>3-wave resonance</div>
+      <div class="md">Balance 7.63, 19.99 and 32.57 Hz in a golden-ratio pattern.</div>
+    </button>
+    <button class="mode" data-mode="muse">
+      <div class="mh"><i class="ti ti-bluetooth"></i>Live Muse 2</div>
+      <div class="md">Train from four real EEG channels over Web Bluetooth.</div>
+    </button>
+  </div>
+
+  <div class="grid">
+    <div class="side">
+      <div class="card" style="padding:14px">
+        <h2>Training protocol<span class="cnt" id="targetCnt"></span></h2>
+        <div class="bands" id="bands"></div>
+      </div>
+      <div class="card sim-only">
+        <h2>Simulated mental state</h2>
+        <div class="states" id="states">
+          <button class="statebtn" data-state="sleep">Deep sleep</button>
+          <button class="statebtn" data-state="meditative">Meditative</button>
+          <button class="statebtn on" data-state="calm">Calm focus</button>
+          <button class="statebtn" data-state="thinking">Active thinking</button>
+          <button class="statebtn" data-state="hyper">Hyperfocus</button>
+        </div>
+        <div class="sliderrow">
+          <label><span>Training intent</span><b id="effortVal">58%</b></label>
+          <input id="effort" type="range" min="0" max="100" value="58">
+        </div>
+        <div class="sliderrow">
+          <label><span>Signal stability</span><b id="stabilityVal">72%</b></label>
+          <input id="stability" type="range" min="15" max="100" value="72">
+        </div>
+        <div class="calstate">The state sets the synthetic frequency mix. Training intent strengthens the selected protocol.</div>
+      </div>
+      <div class="card sim-only">
+        <h2>Signal artifacts</h2>
+        <div class="chips" id="artifacts">
+          <button class="chip" data-artifact="blink">blink</button>
+          <button class="chip" data-artifact="muscle">muscle</button>
+          <button class="chip" data-artifact="mains">50 hz</button>
+        </div>
+        <div class="calstate"><b>Optional noise lab.</b> Toggle interference to see how non-brain signals distort the trace.</div>
+      </div>
+      <div class="card muse-only" id="museCard">
+        <h2>Muse 2 connection</h2>
+        <div class="muse-status" id="museStatus"><i></i><span>headset not connected</span></div>
+        <div class="muse-actions">
+          <button class="btn go" id="connectMuse"><i class="ti ti-bluetooth"></i>Connect Muse 2</button>
+          <button class="btn ghost" id="disconnectMuse" style="display:none"><i class="ti ti-plug-off"></i>Disconnect</button>
+        </div>
+        <div class="channels">
+          <div class="channel" data-electrode="0">TP9</div>
+          <div class="channel" data-electrode="1">AF7</div>
+          <div class="channel" data-electrode="2">AF8</div>
+          <div class="channel" data-electrode="3">TP10</div>
+        </div>
+        <div class="muse-meta"><span id="musePackets">waiting for EEG</span><span id="museBattery">battery --</span></div>
+        <div class="calstate"><b>Desktop Chrome or Edge.</b> Turn on the Muse 2, click Connect, then select it in the browser prompt. EEG stays in this page.</div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="scope">
+        <div class="lbl" id="scopeLbl">alpha &middot; 8&ndash;12 hz</div>
+        <div class="now" id="scopeNow">&mdash; &micro;V</div>
+        <canvas id="scope"></canvas>
+      </div>
+
+      <div class="spectrum">
+        <div class="lbl" id="spectrumLbl">live synthetic spectrum</div>
+        <div class="scale">0&ndash;50 hz</div>
+        <canvas id="spectrum"></canvas>
+      </div>
+
+      <div class="bloomcard">
+        <canvas id="bloom"></canvas>
+        <div class="stat l"><b id="statTime">00:00</b><br>session</div>
+        <div class="stat r"><b id="statPeak">0</b><br>peak</div>
+        <div class="center">
+          <div class="score" id="score">0</div>
+          <div class="scorelbl" id="scoreLbl">training score</div>
+          <div class="cue" id="cue">pick a mode, then press start</div>
+        </div>
+        <div class="idlehint">calibrate, then let the selected signal drive the feedback loop</div>
+      </div>
+
+      <div class="meters" id="meters"></div>
+
+      <div class="progwrap">
+        <div class="ph">
+          <span class="pt">session progress</span>
+          <span class="pk"><span id="progAvg">avg 0</span> &middot; <span id="progTip">time in zone 0%</span></span>
+        </div>
+        <div class="prog"><canvas id="prog"></canvas></div>
+      </div>
+
+      <div class="controls">
+        <button class="btn go" id="go"><i class="ti ti-player-play"></i><span id="goTxt">Calibrate &amp; start</span></button>
+        <button class="btn finish" id="finish"><i class="ti ti-flag"></i>Finish session</button>
+        <button class="btn ghost" id="reset"><i class="ti ti-refresh"></i>Reset</button>
+        <div class="togs">
+          <div class="tog on" id="tSound"><span class="sw"></span>sound</div>
+          <div class="tog on" id="tVisual"><span class="sw"></span>bloom</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="foot">
+    <b>How it works.</b> Simulated modes generate EEG-like signals from oscillators, pink noise and optional artifacts.
+    <b>Live Muse 2</b> reads the headset's four EEG electrodes at 256 hz over Web Bluetooth. Both sources use the same
+    windowed spectrum, three-second baseline and adaptive reward loop: activity above threshold raises the tone, blooms
+    the visual and earns points. The experimental resonance mode models <code>7.63</code>, <code>19.99</code> and
+    <code>32.57 hz</code>. This is an educational trainer, not a medical device; EEG data is processed locally.
+  </p>
+</div>
+
+<div class="modal" id="summaryModal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
+  <div class="summary">
+    <h2 id="summaryTitle">Session complete</h2>
+    <div class="sub" id="summarySub">Your simulated training run at a glance.</div>
+    <div class="sumgrid">
+      <div class="sumstat"><b id="sumScore">0</b><span>score</span></div>
+      <div class="sumstat"><b id="sumZone">0%</b><span>in zone</span></div>
+      <div class="sumstat"><b id="sumStreak">0s</b><span>best streak</span></div>
+      <div class="sumstat"><b id="sumBand">alpha</b><span>strongest</span></div>
+    </div>
+    <button class="btn go" id="closeSummary">Run another session</button>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+
+</body>
+</html>

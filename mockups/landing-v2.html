@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resonance &mdash; Harmony. Mind. Flow.</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.24.0/dist/tabler-icons.min.css">
+<style>
+  /* Base & Themes */
+  :root {
+    --bg: #07090E;
+    --bg-surface: rgba(14, 18, 27, 0.65);
+    --line: rgba(255, 255, 255, 0.08);
+    --txt: #EDEFEF;
+    --txt-muted: #8A92A0;
+    --txt-faint: #4E5666;
+    --accent: #3EE8B5;
+    --accent-glow: rgba(62, 232, 181, 0.35);
+    --wave-hue: 165;
+    --font-serif: "Editorial New", "Didot", "Bodoni MT", "Georgia", serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  /* Palette 1: Warm Amber & Champagne Gold */
+  body[data-palette="amber"] {
+    --bg: #0A0806;
+    --bg-surface: rgba(22, 18, 14, 0.7);
+    --line: rgba(245, 180, 100, 0.12);
+    --txt: #F7EFE6;
+    --txt-muted: #A89B8C;
+    --txt-faint: #635748;
+    --accent: #F5A623;
+    --accent-glow: rgba(245, 166, 35, 0.35);
+    --wave-hue: 38;
+  }
+
+  /* Palette 2: Twilight Amethyst & Deep Violet */
+  body[data-palette="violet"] {
+    --bg: #08060F;
+    --bg-surface: rgba(18, 14, 28, 0.7);
+    --line: rgba(175, 140, 245, 0.12);
+    --txt: #F2EEFA;
+    --txt-muted: #9E94B8;
+    --txt-faint: #5B5273;
+    --accent: #A855F7;
+    --accent-glow: rgba(168, 85, 247, 0.35);
+    --wave-hue: 275;
+  }
+
+  /* Palette 3: Sunset Copper & Rose Quartz */
+  body[data-palette="copper"] {
+    --bg: #0C0808;
+    --bg-surface: rgba(26, 17, 17, 0.7);
+    --line: rgba(245, 140, 130, 0.12);
+    --txt: #F8EFEF;
+    --txt-muted: #B09898;
+    --txt-faint: #6E5454;
+    --accent: #FB7185;
+    --accent-glow: rgba(251, 113, 133, 0.35);
+    --wave-hue: 350;
+  }
+
+  /* Palette 4: Obsidian & Platinum Monochrome */
+  body[data-palette="monochrome"] {
+    --bg: #050505;
+    --bg-surface: rgba(18, 18, 18, 0.7);
+    --line: rgba(255, 255, 255, 0.1);
+    --txt: #FFFFFF;
+    --txt-muted: #999999;
+    --txt-faint: #444444;
+    --accent: #E5E5E5;
+    --accent-glow: rgba(255, 255, 255, 0.3);
+    --wave-hue: 210;
+  }
+
+  /* Palette 5: Ceramic Alabaster (Light Mode) - Default */
+  body[data-palette="alabaster"] {
+    --bg: #F6F5F1;
+    --bg-surface: rgba(255, 255, 255, 0.82);
+    --line: rgba(22, 23, 25, 0.08);
+    --txt: #161719;
+    --txt-muted: #5C626E;
+    --txt-faint: #8E95A2;
+    --accent: #0D7A68;
+    --accent-glow: rgba(13, 122, 104, 0.22);
+    --wave-hue: 168;
+    --orb-bg: radial-gradient(circle at 35% 35%, #E8F5F1 0%, #C4DDD5 60%, #9FC4B9 100%);
+    --orb-shadow: 0 16px 40px rgba(13, 122, 104, 0.18), inset 0 2px 4px rgba(255, 255, 255, 0.9);
+  }
+
+  body {
+    --orb-bg: radial-gradient(circle at 35% 35%, var(--accent) 0%, rgba(10, 15, 20, 0.9) 75%);
+    --orb-shadow: 0 0 35px var(--accent-glow), inset 0 0 15px rgba(255, 255, 255, 0.4);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--txt);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+    transition: background 0.5s ease, color 0.5s ease;
+  }
+
+  /* Top Navigation */
+  header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 50;
+    padding: 24px 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    font-family: var(--font-serif);
+    font-size: 19px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-weight: 400;
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--txt-muted);
+  }
+  nav a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+  nav a:hover { color: var(--txt); }
+
+  /* Background Canvas */
+  #waveCanvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* Main Hero Stage */
+  main {
+    position: relative;
+    z-index: 10;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 120px 48px 48px;
+    max-width: 1300px;
+    margin: 0 auto;
+  }
+
+  .hero-top {
+    text-align: center;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .hero-top h1 {
+    font-family: var(--font-serif);
+    font-size: clamp(42px, 5.8vw, 76px);
+    font-weight: 300;
+    letter-spacing: -0.02em;
+    line-height: 1.08;
+    margin-bottom: 18px;
+  }
+  .hero-top p {
+    font-size: clamp(15px, 1.4vw, 18px);
+    color: var(--txt-muted);
+    font-weight: 300;
+    line-height: 1.55;
+    margin-bottom: 30px;
+    letter-spacing: 0.01em;
+  }
+  .pill-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 24px;
+    border-radius: 999px;
+    background: var(--bg-surface);
+    border: 1px solid var(--line);
+    color: var(--txt);
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    backdrop-filter: blur(16px);
+    transition: all 0.25s ease;
+  }
+  .pill-cta:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 24px var(--accent-glow);
+    transform: translateY(-1px);
+  }
+
+  /* Central Coherence Orb & Telemetry */
+  .center-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin: 40px auto;
+    text-align: center;
+    position: relative;
+  }
+  .orb-container {
+    width: 140px;
+    height: 140px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+  }
+  .orb-glow {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+    filter: blur(28px);
+    opacity: 0.55;
+    animation: pulse 4s ease-in-out infinite;
+  }
+  .orb-mesh {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: var(--orb-bg);
+    box-shadow: var(--orb-shadow);
+    position: relative;
+    z-index: 2;
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(0.9); opacity: 0.4; }
+    50% { transform: scale(1.15); opacity: 0.7; }
+  }
+
+  .coherence-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--txt-muted);
+    margin-bottom: 6px;
+  }
+  .coherence-val {
+    font-family: var(--font-sans);
+    font-size: 46px;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+    color: var(--txt);
+    margin-bottom: 6px;
+  }
+  .coherence-state {
+    font-size: 12px;
+    color: var(--txt-faint);
+    letter-spacing: 0.05em;
+  }
+
+  /* Sine trace bar */
+  .wave-indicator {
+    width: 280px;
+    height: 36px;
+    margin: 20px auto 10px;
+  }
+  .biometric-note {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--txt-muted);
+    letter-spacing: 0.06em;
+  }
+  .biometric-note b {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* Footer Details */
+  .hero-bottom {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 32px;
+    border-top: 1px solid var(--line);
+    padding-top: 32px;
+  }
+  .features-trio {
+    display: flex;
+    gap: 48px;
+    flex-wrap: wrap;
+  }
+  .feat-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .feat-item i {
+    font-size: 20px;
+    color: var(--accent);
+  }
+  .feat-item span {
+    font-size: 13px;
+    color: var(--txt-muted);
+    letter-spacing: 0.02em;
+  }
+
+  .purchase-box {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    background: var(--bg-surface);
+    border: 1px solid var(--line);
+    padding: 16px 28px;
+    border-radius: 16px;
+    backdrop-filter: blur(20px);
+  }
+  .purchase-text .price {
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--txt);
+  }
+  .purchase-text .desc {
+    font-size: 12px;
+    color: var(--txt-muted);
+  }
+  .btn-buy {
+    padding: 10px 22px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #07090E;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 0 20px var(--accent-glow);
+    transition: all 0.2s;
+  }
+  .btn-buy:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+  }
+
+  /* Floating Palette Picker Bar */
+  .palette-bar {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    background: var(--bg-surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    backdrop-filter: blur(24px);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  }
+  .palette-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--txt-muted);
+    margin-right: 6px;
+    padding-left: 6px;
+  }
+  .palette-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--txt-muted);
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: all 0.18s;
+  }
+  .palette-btn .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .palette-btn:hover {
+    color: var(--txt);
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .palette-btn.active {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--line);
+    color: var(--txt);
+  }
+</style>
+</head>
+<body data-palette="alabaster">
+
+<!-- Fluid Particle Waves Canvas -->
+<canvas id="waveCanvas"></canvas>
+
+<!-- Header -->
+<header>
+  <div class="brand">Resonance</div>
+  <nav>
+    <a href="#science">Our Science</a>
+    <a href="#experience">Experience</a>
+    <a href="#learn">Learn</a>
+    <a href="#begin">Begin</a>
+    <a href="#buy" style="color:var(--txt); font-weight:600;">$300</a>
+  </nav>
+</header>
+
+<!-- Main Experience -->
+<main>
+  <div class="hero-top">
+    <h1>Harmony. Mind. Flow.</h1>
+    <p>Unlock your focused calm with personal neurofeedback.</p>
+    <button class="pill-cta" id="btnLaunchStudio">Discover the Device &middot; $300</button>
+  </div>
+
+  <div class="center-stage">
+    <div class="orb-container">
+      <div class="orb-glow"></div>
+      <div class="orb-mesh"></div>
+    </div>
+    <div class="coherence-label">Coherence</div>
+    <div class="coherence-val" id="coherenceVal">87.4</div>
+    <div class="coherence-state">Stable &middot; Optimal State</div>
+
+    <canvas class="wave-indicator" id="indicatorCanvas"></canvas>
+    <div class="biometric-note">
+      Biometric Flow: <b>Current Focus: 91% &middot; Alpha Waves</b>
+    </div>
+  </div>
+
+  <div class="hero-bottom">
+    <div class="features-trio">
+      <div class="feat-item">
+        <i class="ti ti-eye"></i>
+        <span>Intuitive Sensing</span>
+      </div>
+      <div class="feat-item">
+        <i class="ti ti-hand-stop"></i>
+        <span>Gentle Guiding</span>
+      </div>
+      <div class="feat-item">
+        <i class="ti ti-hourglass-empty"></i>
+        <span>Lasting Balance</span>
+      </div>
+    </div>
+
+    <div class="purchase-box">
+      <div class="purchase-text">
+        <div class="price">$300.</div>
+        <div class="desc">Begin your journey toward mental resonance.</div>
+      </div>
+      <button class="btn-buy" id="btnBuyNow">Add to Bag</button>
+    </div>
+  </div>
+</main>
+
+<!-- Floating Palette Switcher -->
+<div class="palette-bar">
+  <span class="palette-label">Color Palette</span>
+  <button class="palette-btn" data-color="emerald"><span class="dot" style="background:#3EE8B5;"></span>Emerald</button>
+  <button class="palette-btn" data-color="amber"><span class="dot" style="background:#F5A623;"></span>Amber Gold</button>
+  <button class="palette-btn" data-color="violet"><span class="dot" style="background:#A855F7;"></span>Twilight Violet</button>
+  <button class="palette-btn" data-color="copper"><span class="dot" style="background:#FB7185;"></span>Sunset Copper</button>
+  <button class="palette-btn" data-color="monochrome"><span class="dot" style="background:#E5E5E5;"></span>Platinum</button>
+  <button class="palette-btn active" data-color="alabaster"><span class="dot" style="background:#0D7A68; border:1px solid rgba(0,0,0,0.15);"></span>Alabaster</button>
+</div>
+
+<script>
+  // 1. Interactive Fluid Particle Wave Simulation
+  const canvas = document.getElementById('waveCanvas');
+  const ctx = canvas.getContext('2d');
+  let width, height;
+
+  function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const numParticles = 280;
+  const particles = [];
+  for (let i = 0; i < numParticles; i++) {
+    particles.push({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      baseY: height * 0.45 + (Math.random() - 0.5) * 320,
+      vx: (Math.random() - 0.5) * 0.4,
+      phase: Math.random() * Math.PI * 2,
+      speed: 0.008 + Math.random() * 0.012,
+      size: 1 + Math.random() * 2.2,
+      alpha: 0.2 + Math.random() * 0.6
+    });
+  }
+
+  let time = 0;
+  function drawWaves() {
+    ctx.clearRect(0, 0, width, height);
+    time += 0.012;
+
+    const hue = getComputedStyle(document.body).getPropertyValue('--wave-hue').trim() || '165';
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      p.phase += p.speed;
+      p.x += p.vx;
+      if (p.x < 0) p.x = width;
+      if (p.x > width) p.x = 0;
+
+      // Undulating multi-wave motion
+      const wave1 = Math.sin(p.x * 0.003 + time) * 75;
+      const wave2 = Math.cos(p.x * 0.006 - time * 0.8) * 45;
+      const wave3 = Math.sin(p.phase) * 20;
+      p.y = p.baseY + wave1 + wave2 + wave3;
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${hue}, 85%, 65%, ${p.alpha})`;
+      ctx.fill();
+    }
+
+    requestAnimationFrame(drawWaves);
+  }
+  requestAnimationFrame(drawWaves);
+
+  // 2. Sine Wave Indicator
+  const indCanvas = document.getElementById('indicatorCanvas');
+  const indCtx = indCanvas.getContext('2d');
+  indCanvas.width = 280;
+  indCanvas.height = 36;
+
+  function drawIndicator() {
+    indCtx.clearRect(0, 0, 280, 36);
+    const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#3EE8B5';
+    indCtx.strokeStyle = accent;
+    indCtx.lineWidth = 1.5;
+    indCtx.beginPath();
+    for (let x = 0; x < 280; x++) {
+      const y = 18 + Math.sin(x * 0.05 + time * 3) * 8 * Math.sin(x * 0.015);
+      if (x === 0) indCtx.moveTo(x, y);
+      else indCtx.lineTo(x, y);
+    }
+    indCtx.stroke();
+    requestAnimationFrame(drawIndicator);
+  }
+  requestAnimationFrame(drawIndicator);
+
+  // 3. Color Palette Switcher
+  document.querySelectorAll('.palette-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.palette-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const color = btn.dataset.color;
+      document.body.dataset.palette = color;
+    });
+  });
+</script>
+
+</body>
+</html>

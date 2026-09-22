@@ -1,25 +1,33 @@
 # Resonance
 
-Resonance is a desktop-browser neurofeedback trainer with two synthetic EEG modes and an optional live Muse 2 input. It turns band activity into a continuous audio and visual reward loop, with calibration, adaptive thresholds, session scoring, and summaries.
+Resonance is a browser neurofeedback studio. It reads a Muse 2 or Muse S over Web Bluetooth, or a realistic synthetic EEG, and turns rule-based reward into a flock that gathers, colours and speeds up, with chimes or a drone on the same signal.
 
 Live app: [resonance-neurofeedback.vercel.app](https://resonance-neurofeedback.vercel.app)
 
+User guide: [Quick start](docs/quick-start.md) — connect a Muse, start a session, and troubleshoot signal issues.
+
 ## Features
 
-- Single-band training for delta, theta, alpha, beta, or gamma
-- Three-frequency resonance simulation at 7.63, 19.99, and 32.57 Hz
-- Synthetic EEG with pink noise and optional blink, muscle, and 50 Hz artifacts
-- Live Muse 2 EEG over Web Bluetooth using TP9, AF7, AF8, and TP10
-- Hann-windowed spectrum analysis and adaptive baseline thresholding
-- Audio tone, bloom, score, progress graph, time-in-zone, and session summary
-- All EEG processing occurs in the browser
+- Guided flow: connect, check signal, record a baseline, train
+- Multi-rule protocols: train any measure up or keep it down, as a percentage of your own baseline. All enabled rules must pass
+- Measures: delta, theta, alpha, beta, gamma, theta/beta, alpha/theta, alpha peak frequency, frontal alpha R/L, and the 7.63 / 19.99 / 32.57 Hz resonance triad
+- Seven starting protocols, plus a local library of up to 24 saved setups
+- Hold training (0 to 10 s) with a progress ring; the flock gathers while you hold
+- Manual thresholds or auto difficulty that steers toward a target reward rate
+- Timed blocks and breaks. The clock counts usable signal only
+- Per-sensor quality (blink, motion, muscle, contact). Artifacts never count toward reward or baseline
+- Live spectrum (linear or dB), spectrogram, raw traces, and a 60 s reward-index strip
+- Synthetic EEG with pink noise, waxing and waning rhythms, and injectable blinks, jaw clench, mains and loose contact. It runs through the same pipeline as the headset
+- Session journal with per-block stats, reward timeline, notes, trend chart, CSV and JSON export. Raw EEG is never stored
+- Six palettes, fullscreen stage, keyboard shortcuts, reduced-motion support, WebMCP tools
+- All processing happens in the browser
 
 ## Requirements
 
 - Node.js 20.19 or newer; Node 22 is recommended and recorded in `.nvmrc`
 - npm
 - Desktop Chrome or Edge for Muse 2/Web Bluetooth
-- A Muse 2 is optional; both simulation modes work without hardware
+- A Muse is optional; the simulator works without hardware
 
 No environment variables, API keys, accounts, databases, or backend services are required.
 
@@ -33,7 +41,7 @@ npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. The simulation is ready immediately.
+Open the local URL printed by Vite. The simulation is ready immediately. Run the unit tests with `npm test`.
 
 To reproduce the production build:
 
@@ -45,30 +53,37 @@ npm run preview
 
 The static production output is written to `dist/`.
 
-## Use a Muse 2
+## Use a Muse 2 or Muse S
 
-1. Turn on Bluetooth and the Muse 2.
-2. Open the app in desktop Chrome or Edge over HTTPS.
-3. Select **Live Muse 2**.
-4. Click **Connect Muse 2** and choose the headset in the browser prompt.
-5. Wait for TP9, AF7, AF8, and TP10 to show incoming packets.
-6. Choose a target band and click **Calibrate & start**.
+1. Turn on Bluetooth and your Muse.
+2. Open the app in desktop Chrome or Edge over HTTPS or localhost.
+3. Click **Connect Muse** beside the source badge in the top bar, or open **Signal → Muse headset** in the setup panel and click **Connect Muse** there.
+4. Choose the headset in the browser prompt.
+5. Watch **Traces** until every training sensor reads good.
+6. Pick a protocol and click **Start session**. A 20 second baseline runs first.
 
-The app waits for at least one second of complete four-channel EEG before enabling calibration. The headset data is averaged, DC-corrected, windowed, and sent through the same spectral and reward pipeline as the simulator.
+Training sensors default to AF7 + AF8 and can be changed in the Sensors card. Changing them mid-session records a new baseline.
 
 ## Architecture
 
 ```text
 Synthetic EEG ─┐
-               ├─> ring buffer -> Hann-windowed DFT -> band power
-Muse 2 EEG ────┘                                  -> adaptive reward
-                                                   -> audio + visuals + summary
+               ├─> per-channel ring buffers -> Hann PSD + quality (10 Hz)
+Muse EEG ──────┘        -> measures -> rules vs baseline -> hold -> reward
+                                     -> flock + audio + charts + journal
 ```
 
-- `index.html` contains the interface and styling.
-- `app.js` contains signal generation, Muse input, spectral analysis, reward logic, audio, and canvas rendering.
-- `vite.config.js` contains the local Vite configuration.
-- `package-lock.json` pins the complete dependency tree for repeatable installs.
+- `index.html` is the markup; `src/styles.css` holds tokens, palettes and layout.
+- `app.js` wires the modules to the UI and runs the frame loop.
+- `src/dsp.js` buffers, FFT, PSD, band amplitude, peak frequency, signal quality.
+- `src/protocol.js` measures, presets, baseline, rules, hold, auto difficulty.
+- `src/session.js` calibration, blocks and breaks on usable time.
+- `src/sim.js` seeded synthetic EEG and artifacts.
+- `src/flock.js`, `src/audio.js`, `src/charts.js` feedback and instruments.
+- `src/journal.js`, `src/store.js` local persistence. `src/mcp.js` WebMCP tools.
+- `mockups/landing-v2.html` is the earlier marketing-page mock, kept for reference.
+
+In dev builds `window.__resonance.advance(seconds)` steps the pipeline without animation frames, which is useful in hidden tabs and automated checks.
 
 ## Deployment
 
@@ -89,11 +104,8 @@ Before publishing a change:
 ```bash
 npm ci
 npm audit
+npm test
 npm run build
 ```
 
-Then verify the simulation calibration, single-band scoring, resonance mode, Muse connection gate, audio toggle, and session summary in the browser.
-
-## Scope
-
-This is an educational and experimental trainer, not a medical device. The synthetic modes do not read the user. Live Muse results depend on fit, electrode contact, movement, and other EEG artifacts.
+Then run a demo session in the browser: baseline, a hold protocol, an injected blink, the break, the summary and the journal.

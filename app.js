@@ -1,850 +1,1007 @@
 import { MuseClient } from 'muse-js';
+import { marked } from 'marked';
+import readme from './README.md?raw';
+import quickStart from './docs/quick-start.md?raw';
+import { FS, CHANNELS, CHANNEL_INFO, WINDOW, BANDS, psd, peakFrequency, Channel, assessQuality, DEFAULT_QUALITY_LIMITS } from './src/dsp.js';
+import { ProtocolEngine, computeFeatures, normalizeProtocol, describeProtocol, MEASURES, MEASURE_BY_KEY, PRESETS, DEFAULT_PROTOCOL } from './src/protocol.js';
+import { SessionClock, normalizeTimer, describeTimer, formatClock, TIMER_PRESETS, DEFAULT_TIMER } from './src/session.js';
+import { SimulatedEEG, SIM_STATES } from './src/sim.js';
+import { FlockCanvas } from './src/flock.js';
+import { AudioEngine } from './src/audio.js';
+import { SessionJournal } from './src/journal.js';
+import { SpectrumChart, Spectrogram, TraceChart, StripChart, TrendChart, chartTheme, refreshChartTheme } from './src/charts.js';
+import { loadSettings, saveSettings, loadLibrary, saveLibrary, LIBRARY_LIMIT } from './src/store.js';
+import { registerResonanceMCP } from './src/mcp.js';
 
-const BANDS = [
-  { k: 'delta', hz: '0.5-4 hz', c: '--delta', lo: 0.5, hi: 4, center: 2, desc: 'deep sleep, recovery' },
-  { k: 'theta', hz: '4-8 hz', c: '--theta', lo: 4, hi: 8, center: 6, desc: 'meditative, creative' },
-  { k: 'alpha', hz: '8-13 hz', c: '--alpha', lo: 8, hi: 13, center: 10, desc: 'relaxed calm-focus' },
-  { k: 'beta', hz: '13-30 hz', c: '--beta', lo: 13, hi: 30, center: 20, desc: 'active thinking, alert' },
-  { k: 'gamma', hz: '30-50 hz', c: '--gamma', lo: 30, hi: 50, center: 40, desc: 'hyperfocus, binding' }
-];
-
-const RESONANCE = [7.63, 19.99, 32.57];
-const STATE_PROFILES = {
-  sleep:      [1.00, 0.40, 0.13, 0.07, 0.04],
-  meditative: [0.22, 0.95, 0.62, 0.15, 0.08],
-  calm:       [0.12, 0.34, 1.00, 0.34, 0.10],
-  thinking:   [0.08, 0.18, 0.34, 1.00, 0.26],
-  hyper:      [0.06, 0.14, 0.24, 0.84, 0.76]
-};
-const STATE_LABELS = {
-  sleep: 'deep sleep', meditative: 'meditative', calm: 'calm focus', thinking: 'active thinking', hyper: 'hyperfocus'
-};
-
-const $ = id => document.getElementById(id);
-const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
-const cssVar = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-const percentile = (values, q) => {
-  if (!values.length) return 0.5;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor((sorted.length - 1) * q)];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const toast = (msg, err = false) => {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', err);
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3200);
 };
 
-let mode = 'single';
-let targets = [2];
-let inputSource = 'sim';
-let mentalState = 'calm';
-let effort = 0.58;
-let stability = 0.72;
-let sound = true;
-let visual = true;
-let phase = 'idle';
-let score = 0;
-let peak = 0;
-let elapsed = 0;
-let threshold = 0.5;
-let hot = false;
-let sessionStart = 0;
-let calibrationStart = 0;
-let calibrationValues = [];
-let featureHistory = [];
-let progressHistory = [];
-let zoneHits = 0;
-let zoneTotal = 0;
-let currentStreak = 0;
-let bestStreak = 0;
-let feature = 0;
-let artifacts = { blink: false, muscle: false, mains: false };
+const ANALYSIS_DT = 0.1;       // s, rule evaluation and clock rate
+const DEMO_CALIBRATION = 6;    // s
+const ARTIFACT_HOLDOFF = 1000; // ms reward stays suppressed after a blink or movement
+
+// ==========================================
+// 1. STATE
+// ==========================================
+
+const saved = loadSettings();
+const settings = {
+  palette: saved.palette || 'alabaster',
+  protocol: normalizeProtocol(saved.protocol || DEFAULT_PROTOCOL),
+  timer: normalizeTimer(saved.timer || DEFAULT_TIMER),
+  sensors: Array.isArray(saved.sensors) && saved.sensors.length ? saved.sensors.filter(s => CHANNELS.includes(s)) : ['AF7', 'AF8'],
+  sound: { mode: 'chime', volume: 0.6, rate: 1, ambience: true, ...saved.sound },
+  flock: { variant: 'classic', count: 72, ...saved.flock },
+  milestoneSec: saved.milestoneSec || 5,
+  scope: { view: 'spectrum', scale: 'linear', ...saved.scope },
+  welcomed: !!saved.welcomed
+};
+const persist = () => saveSettings(settings);
+
+let library = loadLibrary();
+let source = 'sim'; // 'sim' | 'muse'
 let museClient = null;
 let museSubscriptions = [];
 let museConnected = false;
-let museSamplesReceived = 0;
-let musePacketCount = 0;
-let museDc = 0;
-let musePeakMicrovolts = 0;
-let lastMusePacketAt = 0;
-const museElectrodeSeenAt = [0, 0, 0, 0];
-const pendingMusePackets = new Map();
+let museConnecting = false;
 
-const bandsEl = $('bands');
-const bandEls = [];
-const meterEls = [];
-const meterBars = [];
-const metersEl = $('meters');
+const channels = new Map(CHANNELS.map(name => [name, new Channel(name)]));
+const spectra = new Map();
+const engine = new ProtocolEngine(settings.protocol);
+const clock = new SessionClock(settings.timer);
+const sim = new SimulatedEEG({ seed: (Date.now() & 0xffff) + 1 });
+const audio = new AudioEngine();
+const journal = new SessionJournal();
 
-BANDS.forEach((band, index) => {
-  const button = document.createElement('button');
-  button.className = 'band';
-  button.dataset.i = index;
-  button.style.setProperty('--bc', `var(${band.c})`);
-  button.innerHTML = `<div class="top"><span class="nm"><i></i>${band.k}</span><span class="hz">${band.hz}</span></div>
-    <div class="desc">${band.desc}</div><div class="bar"><i></i></div>`;
-  button.onclick = () => {
-    if (mode === 'resonate') return;
-    targets = [index];
-    resetSession(false);
-    refreshTargets();
-  };
-  bandsEl.appendChild(button);
-  bandEls.push(button);
+let flock, spectrumChart, spectrogram, traceChart, stripChart, summaryChart, trendChart;
+let result = null;        // latest engine evaluation
+let features = null;
+let signal = 'none';      // 'ok' | 'artifact' | 'bad' | 'none'
+let artifactUntil = 0;
+let muted = false;
+let openSessionId = null;
+let pendingStart = false; // start requested before the first analysis window filled
+const stats = { usable: 0, rewardSec: 0, streak: 0, bestStreak: 0, score: 0, milestones: 0 };
 
-  const meter = document.createElement('div');
-  meter.className = 'meter';
-  meter.dataset.i = index;
-  meter.style.setProperty('--mc', `var(${band.c})`);
-  meter.innerHTML = `<div class="mtop"><span class="mn">${band.k}</span><span class="mv" data-v>0</span></div>
-    <div class="track">${Array.from({ length: 9 }, () => '<i></i>').join('')}</div>`;
-  meter.onclick = button.onclick;
-  metersEl.appendChild(meter);
-  meterEls.push(meter);
-  meterBars.push({ bars: [...meter.querySelectorAll('.track>i')], value: meter.querySelector('[data-v]'), history: new Array(9).fill(0.1) });
-});
+// ==========================================
+// 2. SIGNAL → FEATURES → REWARD
+// ==========================================
 
-document.querySelectorAll('.mode').forEach(button => {
-  button.onclick = () => setMode(button.dataset.mode);
-});
+let lastFrame = performance.now();
+let analysisAcc = 0;
 
-document.querySelectorAll('.statebtn').forEach(button => {
-  button.onclick = () => {
-    mentalState = button.dataset.state;
-    document.querySelectorAll('.statebtn').forEach(item => item.classList.toggle('on', item === button));
-    toast(`Synthetic state: ${STATE_LABELS[mentalState]}`);
-  };
-});
+let nowMs = 0;
 
-$('effort').oninput = event => {
-  effort = Number(event.target.value) / 100;
-  $('effortVal').textContent = `${event.target.value}%`;
-};
-$('stability').oninput = event => {
-  stability = Number(event.target.value) / 100;
-  $('stabilityVal').textContent = `${event.target.value}%`;
-};
+function step(now) {
+  // The first rAF timestamp can precede module start, so dt is clamped at zero.
+  const dt = Math.max(0, Math.min((now - lastFrame) / 1000, 0.1));
+  lastFrame = now;
+  nowMs = now;
 
-document.querySelectorAll('.chip').forEach(button => {
-  button.onclick = () => {
-    const key = button.dataset.artifact;
-    artifacts[key] = !artifacts[key];
-    button.classList.toggle('on', artifacts[key]);
-  };
-});
-
-$('connectMuse').onclick = connectMuse2;
-$('disconnectMuse').onclick = disconnectMuseClient;
-
-async function connectMuse2() {
-  if (!navigator.bluetooth) {
-    setMuseStatus('Web Bluetooth is unavailable — use desktop Chrome or Edge', false);
-    toast('Muse 2 needs desktop Chrome or Edge.');
-    return;
+  if (source === 'sim') {
+    for (const [name, samples] of Object.entries(sim.generate(dt))) channels.get(name).push(samples, now);
   }
-  const connectButton = $('connectMuse');
-  connectButton.disabled = true;
-  connectButton.innerHTML = '<i class="ti ti-loader-2"></i>Connecting...';
-  setMuseStatus('select Muse 2 in the browser prompt', false);
+
+  analysisAcc += dt;
+  while (analysisAcc >= ANALYSIS_DT) {
+    analysisAcc -= ANALYSIS_DT;
+    analyse(now);
+  }
+  drawScope();
+}
+
+function frame(now) {
+  step(now);
+  requestAnimationFrame(frame);
+}
+
+function analyse(now) {
+  spectra.clear();
+  for (const [name, ch] of channels) {
+    if (ch.count >= WINDOW && now - ch.lastSampleAt < 1000) {
+      ch.spectrum = psd(ch.latest(WINDOW));
+      spectra.set(name, ch.spectrum);
+    } else ch.spectrum = null;
+    assessQuality(ch, now, DEFAULT_QUALITY_LIMITS);
+  }
+
+  const states = settings.sensors.map(name => channels.get(name).quality.state);
+  signal = states.some(s => s === 'off') ? 'none'
+    : states.some(s => s === 'bad') ? 'bad'
+    : states.some(s => s === 'artifact') ? 'artifact' : 'ok';
+  if (signal === 'artifact') artifactUntil = now + ARTIFACT_HOLDOFF;
+  if (pendingStart && signal !== 'none') { pendingStart = false; startSession(); }
+  const contact = signal === 'ok' || signal === 'artifact';
+  const clean = signal === 'ok' && now >= artifactUntil;
+
+  features = computeFeatures(spectra, settings.sensors);
+  const feedbackOpen = clock.phase !== 'break' && !clock.paused && clock.phase !== 'finished';
+  result = engine.evaluate(features, ANALYSIS_DT, { valid: clean && feedbackOpen });
+
+  const wasTraining = clock.training;
+  for (const event of clock.tick(ANALYSIS_DT, { valid: contact })) handleClockEvent(event);
+
+  const rewarded = result.reward && (clock.training || clock.phase === 'idle');
+  if (wasTraining && clock.training && contact) accumulate(rewarded);
+
+  flock.setReward(rewarded, 0.25 + result.index * 0.75, clock.phase === 'calibrating' ? 0 : result.holdProgress);
+  flock.setDimmed(clock.phase === 'break' || clock.paused || clock.phase === 'calibrating' || !contact);
+  audio.update(result.index, clock.training, rewarded && clock.training);
+  stripChart.push(result.index, rewarded);
+  spectrogram.push(features?.spectrum, ANALYSIS_DT);
+  renderLive(rewarded);
+}
+
+function accumulate(rewarded) {
+  const dt = ANALYSIS_DT;
+  stats.usable += dt;
+  if (rewarded) {
+    stats.rewardSec += dt;
+    stats.streak += dt;
+    stats.bestStreak = Math.max(stats.bestStreak, stats.streak);
+    stats.score += dt * 10 * (0.5 + result.index);
+    const marks = Math.floor(stats.rewardSec / settings.milestoneSec);
+    if (marks > stats.milestones) {
+      stats.milestones = marks;
+      flock.flourish();
+      audio.playMilestone();
+      journal.addEvent('milestone', { rewardedSeconds: marks * settings.milestoneSec });
+    }
+  } else stats.streak = 0;
+  if (result.edge) journal.addEvent(result.edge === 'on' ? 'reward-on' : 'reward-off');
+  journal.recordTick(dt, rewarded, features ? Object.fromEntries(BANDS.map(b => [b.k, features[b.k]])) : {}, result.index);
+}
+
+// ==========================================
+// 3. SESSION FLOW
+// ==========================================
+
+function handleClockEvent(event) {
+  if (event.type === 'calibrated') {
+    if (engine.finishCalibration()) {
+      toast('Baseline recorded. Training begins.');
+    } else {
+      clock.recalibrate();
+      engine.beginCalibration();
+      toast('Not enough clean signal for a baseline. Measuring again.', true);
+    }
+  } else if (event.type === 'block-start') {
+    if (!engine.calibrated) return;
+    if (journal.currentBlock?.blockNumber !== event.block) journal.startBlock(event.block);
+    engine.resetReward();
+    journal.addEvent('block-start', { block: event.block });
+  } else if (event.type === 'block-end') {
+    journal.endBlock();
+  } else if (event.type === 'break-start') {
+    toast(`Block ${event.block} done. Rest for ${formatClock(clock.timer.breakSec)}.`);
+  } else if (event.type === 'finished') {
+    completeSession();
+  }
+}
+
+function startSession() {
+  if (!settings.protocol.rules.length) return toast('Enable at least one rule first.', true);
+  if (signal === 'none') {
+    if (source === 'sim') { pendingStart = true; return; }
+    return toast('Connect the headset and wait for signal.', true);
+  }
+  audio.init();
+  audio.resume();
+  applySound();
+  Object.assign(stats, { usable: 0, rewardSec: 0, streak: 0, bestStreak: 0, score: 0, milestones: 0 });
+  clock.configure({ ...settings.timer, calibrationSec: source === 'sim' ? DEMO_CALIBRATION : settings.timer.calibrationSec });
+  clock.start();
+  engine.beginCalibration();
+  stripChart.clear();
+  journal.startSession({
+    source,
+    protocol: settings.protocol.presetId || 'custom',
+    target: settings.protocol.rules.map(r => r.measure).join('+'),
+    blockDurationSeconds: settings.timer.blockSec,
+    totalBlocks: settings.timer.blocks,
+    sensors: [...settings.sensors],
+    setup: { protocol: settings.protocol, timer: settings.timer }
+  });
+  renderControls();
+}
+
+function togglePause() {
+  if (!clock.active) return startSession();
+  if (clock.paused) { clock.resume(); audio.resume(); }
+  else { clock.pause(); journal.addEvent('pause'); }
+  renderControls();
+}
+
+function finishEarly() {
+  for (const event of clock.finish()) handleClockEvent(event);
+}
+
+function completeSession() {
+  const session = journal.finishSession(stats.score);
+  clock.reset(); // back to live preview against the recorded baseline
+  renderControls();
+  if (!session) return;
+  if (session.stats.totalDurationSeconds < 1) {
+    journal.deleteSession(session.id);
+    return toast('Session ended before training began. Nothing saved.');
+  }
+  openSummary(session, true);
+}
+
+function recalibrate() {
+  if (!clock.active) return;
+  clock.recalibrate();
+  engine.beginCalibration();
+  journal.addEvent('recalibrate');
+  toast('Recording a new baseline.');
+}
+
+// ==========================================
+// 4. LIVE RENDERING
+// ==========================================
+
+function renderLive(rewarded) {
+  // Clock and cue
+  const phase = clock.phase;
+  $('clockTime').textContent = formatClock(phase === 'idle' || phase === 'finished' ? clock.timer.blockSec : clock.remaining);
+  const contact = signal === 'ok' || signal === 'artifact';
+  const phaseText = clock.paused ? 'Paused'
+    : phase === 'calibrating' ? 'Recording baseline'
+    : phase === 'training' ? (contact ? `Block ${clock.block} of ${clock.timer.blocks}` : 'Clock stopped · check sensors')
+    : phase === 'break' ? 'Break'
+    : phase === 'finished' ? 'Finished' : 'Ready · live preview';
+  $('clockPhase').textContent = phaseText;
+
+  const cue = $('cue');
+  let text;
+  if (!settings.protocol.rules.length) text = 'Enable a rule to begin.';
+  else if (signal === 'none') text = source === 'muse' ? 'Waiting for the headset.' : 'Starting signal…';
+  else if (signal === 'bad') text = 'A training sensor lost contact. Adjust the band.';
+  else if (clock.paused) text = 'Paused.';
+  else if (phase === 'calibrating') text = 'Rest your gaze on the flock. Measuring your baseline.';
+  else if (phase === 'break') text = 'Rest. Feedback resumes after the break.';
+  else if (nowMs < artifactUntil) text = 'Movement detected. Stay still.';
+  else if (rewarded) text = 'In the zone.';
+  else if (result.allPass) text = 'Hold it…';
+  else if (phase === 'idle') text = 'Live preview. Press start to record a baseline and train.';
+  else text = 'Ease toward the target. The flock will gather.';
+  cue.textContent = text;
+  cue.classList.toggle('hot', rewarded);
+  $('stage').classList.toggle('rewarded', rewarded);
+
+  const holding = settings.protocol.holdSec > 0 && result.holdProgress > 0 && !rewarded && phase !== 'calibrating';
+  $('holdRing').classList.toggle('show', holding);
+  $('holdArc').style.strokeDashoffset = String(176 * (1 - result.holdProgress));
+
+  document.querySelectorAll('#blockDots i').forEach((dot, i) => {
+    const n = i + 1;
+    const p = phase === 'finished' || n < clock.block || (n === clock.block && phase === 'break') ? 100
+      : n === clock.block && phase === 'training' ? clock.progress * 100 : 0;
+    dot.style.setProperty('--p', `${p}%`);
+  });
+
+  // Signal → reward table
+  const state = $('rewardState');
+  state.textContent = signal === 'none' ? 'no signal' : signal === 'bad' ? 'poor contact'
+    : nowMs < artifactUntil ? 'artifact' : rewarded ? 'reward on' : result.allPass ? 'holding' : `${result.passing} / ${result.rows.length} passing`;
+  state.className = `state ${rewarded ? 'on' : signal === 'bad' || nowMs < artifactUntil ? 'warn' : ''}`;
+  const rows = $('measureRows');
+  if (rows.children.length !== Math.max(1, result.rows.length) || rows.dataset.key !== ruleKey()) buildMeasureRows();
+  result.rows.forEach((r, i) => {
+    const tr = rows.children[i];
+    const m = MEASURE_BY_KEY[r.measure];
+    const digits = m.unit === 'Hz' || !m.unit ? 2 : 1;
+    tr.children[1].innerHTML = r.pct === null ? '—' : `${r.pct.toFixed(0)}%<span class="sub">${r.now.toFixed(digits)} ${m.unit}</span>`;
+    tr.children[2].textContent = `${r.mode === 'up' ? '≥' : '≤'} ${r.target.toFixed(r.target % 1 ? 1 : 0)}%`;
+    tr.children[3].textContent = r.pct === null ? (r.measure === 'asym' ? 'AF7+AF8' : '—') : r.pass ? '✓ pass' : '· wait';
+    tr.children[3].className = r.pass ? 'pass' : 'fail';
+    const bar = tr.querySelector('.bar');
+    const span = Math.max(200, r.target * 1.5);
+    bar.style.setProperty('--v', `${Math.min(100, ((r.pct ?? 0) / span) * 100)}%`);
+    bar.style.setProperty('--t', `${Math.min(100, (r.target / span) * 100)}%`);
+    bar.classList.toggle('pass', r.pass);
+  });
+  $('baselineNote').textContent = engine.calibrated
+    ? `Percent of your recorded baseline${settings.protocol.difficulty.mode === 'auto' ? ' · targets adapt toward ' + Math.round(settings.protocol.difficulty.rate * 100) + '% reward' : ''}.`
+    : 'Percent of a drifting reference until you record a baseline.';
+
+  // Tiles and milestones
+  $('statZone').textContent = `${stats.usable > 0 ? Math.round((stats.rewardSec / stats.usable) * 100) : 0}%`;
+  $('statStreak').textContent = `${stats.bestStreak.toFixed(1)}s`;
+  $('statEarned').textContent = formatClock(Math.floor(stats.rewardSec));
+  $('statScore').textContent = Math.round(stats.score);
+  const marks = $('milestoneMarks');
+  const shown = Math.min(stats.milestones, 12);
+  if (marks.dataset.n !== String(stats.milestones)) {
+    marks.dataset.n = String(stats.milestones);
+    marks.innerHTML = Array.from({ length: Math.max(5, shown) }, (_, i) => `<i class="${i < shown ? 'on' : ''}"></i>`).join('')
+      + (stats.milestones > 12 ? `<span>+${stats.milestones - 12}</span>` : '');
+  }
+  const toNext = settings.milestoneSec - (stats.rewardSec % settings.milestoneSec);
+  $('milestoneText').textContent = `next mark in ${toNext.toFixed(0)} s rewarded`;
+
+  // Sensors and steps
+  document.querySelectorAll('#sensors button').forEach(btn => {
+    const q = channels.get(btn.dataset.ch).quality;
+    btn.className = `${q.state} ${settings.sensors.includes(btn.dataset.ch) ? 'selected' : ''}`;
+    btn.querySelector('em').textContent = q.state === 'artifact' ? (q.blink ? 'blink' : q.motion ? 'motion' : 'muscle') : q.state;
+  });
+  const connected = source === 'sim' || museConnected;
+  const stepState = {
+    connect: connected,
+    signal: connected && signal === 'ok',
+    baseline: engine.calibrated,
+    train: phase === 'finished'
+  };
+  let currentSet = false;
+  document.querySelectorAll('#steps li').forEach(li => {
+    const done = stepState[li.dataset.step];
+    li.classList.toggle('done', done);
+    li.classList.toggle('current', !done && !currentSet);
+    if (!done) currentSet = true;
+  });
+
+  if (features) $('peakText').textContent = `peak ${peakFrequency(features.spectrum, 4, 30).toFixed(1)} Hz`;
+}
+
+const ruleKey = () => settings.protocol.rules.map(r => r.measure + r.mode).join('|');
+
+function buildMeasureRows() {
+  const rows = $('measureRows');
+  rows.dataset.key = ruleKey();
+  rows.innerHTML = settings.protocol.rules.length ? settings.protocol.rules.map(r => {
+    const m = MEASURE_BY_KEY[r.measure];
+    return `<tr><td><div class="m"><i style="${m.color ? `background:var(${m.color})` : ''}"></i>${m.label} ${r.mode === 'up' ? '↑' : '↓'}</div><div class="bar"></div></td><td></td><td></td><td></td></tr>`;
+  }).join('') : '<tr class="empty"><td colspan="4">No rules enabled.</td></tr>';
+}
+
+function drawScope() {
+  const view = settings.scope.view;
+  if (view === 'spectrum') spectrumChart.draw(features?.spectrum || null);
+  else if (view === 'spectrogram') spectrogram.redraw();
+  else traceChart.draw(CHANNELS.map(name => {
+    const ch = channels.get(name);
+    return { name, state: ch.quality.state, selected: settings.sensors.includes(name), samples: ch.count ? ch.latest(TraceChart.SAMPLES) : null };
+  }));
+}
+
+function renderControls() {
+  const active = clock.active;
+  $('btnGoText').textContent = !active ? 'Start session' : clock.paused ? 'Resume' : 'Pause';
+  $('btnGo').querySelector('i').className = `ti ti-player-${active && !clock.paused ? 'pause' : 'play'}`;
+  $('btnFinish').hidden = !active;
+  $('btnRecalibrate').hidden = !active;
+  document.querySelectorAll('[data-panel="timing"] input, [data-panel="timing"] select, #timerPresets button, #sourceMode button')
+    .forEach(el => { el.disabled = active; });
+}
+
+// ==========================================
+// 5. SETUP RAIL
+// ==========================================
+
+function seg(id, value, onChange) {
+  const root = $(id);
+  const set = (v) => root.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.v === String(v)));
+  root.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    set(b.dataset.v);
+    onChange(b.dataset.v);
+  });
+  set(value);
+  return set;
+}
+
+function commitProtocol(changes, { fromPreset = false } = {}) {
+  settings.protocol = normalizeProtocol({ ...settings.protocol, ...changes, presetId: fromPreset ? changes.presetId : null, name: fromPreset ? changes.name : 'Custom' });
+  engine.updateProtocol(settings.protocol);
+  persist();
+  renderProtocol();
+}
+
+function renderProtocol() {
+  const p = settings.protocol;
+  const active = PRESETS.find(x => x.id === p.presetId);
+  $('presets').innerHTML = PRESETS.map(x =>
+    `<button data-id="${x.id}" class="${x.id === p.presetId ? 'active' : ''}"><b>${x.name}</b><span>eyes ${x.eyes}</span></button>`).join('')
+    + `<p class="preset-blurb">${active ? active.blurb : 'Custom rules.'}</p>`;
+
+  $('rules').innerHTML = MEASURES.map(m => {
+    const r = p.rules.find(x => x.measure === m.k);
+    const mode = r?.mode || 'off';
+    return `<div class="rule ${mode === 'off' ? 'off' : ''}" data-m="${m.k}">
+      <div class="name"><i style="${m.color ? `background:var(${m.color})` : ''}"></i><b>${m.label}</b><span>${m.range}</span></div>
+      <div class="seg small">
+        <button data-mode="off" class="${mode === 'off' ? 'active' : ''}" title="Off">–</button>
+        <button data-mode="up" class="${mode === 'up' ? 'active' : ''}" title="Reward at or above">↑</button>
+        <button data-mode="down" class="${mode === 'down' ? 'active' : ''}" title="Reward at or below">↓</button>
+      </div>
+      <input type="number" min="10" max="400" step="1" value="${r?.threshold ?? 100}" aria-label="${m.label} threshold, percent of baseline" title="% of baseline">
+    </div>`;
+  }).join('');
+
+  $('holdSec').value = p.holdSec;
+  $('holdLabel').textContent = p.holdSec > 0 ? `${p.holdSec.toFixed(1)} s` : 'instant reward';
+  $('rateField').hidden = p.difficulty.mode !== 'auto';
+  $('rewardRate').value = Math.round(p.difficulty.rate * 100);
+  $('rateLabel').textContent = `${Math.round(p.difficulty.rate * 100)}%`;
+  document.querySelectorAll('#difficultyMode button').forEach(b => b.classList.toggle('active', b.dataset.v === p.difficulty.mode));
+  $('setupLine').textContent = `${settings.sensors.join(' + ')} · ${describeProtocol(p)} · ${describeTimer(settings.timer)}`;
+  buildMeasureRows();
+}
+
+function rulesFromDom(changed, mode, threshold) {
+  const rules = settings.protocol.rules.filter(r => r.measure !== changed);
+  if (mode !== 'off') rules.push({ measure: changed, mode, threshold });
+  return MEASURES.map(m => rules.find(r => r.measure === m.k)).filter(Boolean);
+}
+
+function initProtocolPanel() {
+  $('protocolShortcuts').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-section]');
+    if (!btn) return;
+    const target = $(btn.dataset.section);
+    const rail = btn.closest('.rail');
+    const behavior = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
+    const top = rail.scrollTop + target.getBoundingClientRect().top - rail.getBoundingClientRect().top
+      - rail.querySelector('.rail-nav').offsetHeight - 16;
+    target.focus({ preventScroll: true });
+    if (rail.scrollHeight > rail.clientHeight) rail.scrollTo({ top, behavior });
+    else {
+      target.style.scrollMarginTop = `${rail.querySelector('.rail-nav').offsetHeight + 16}px`;
+      target.scrollIntoView({ block: 'start', behavior });
+    }
+  });
+  $('presets').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const preset = PRESETS.find(x => x.id === b.dataset.id);
+    commitProtocol({ presetId: preset.id, name: preset.name, rules: preset.rules.map(r => ({ ...r })), holdSec: preset.holdSec }, { fromPreset: true });
+    if (preset.id === 'balance' && !(settings.sensors.includes('AF7') && settings.sensors.includes('AF8'))) toast('Balance reads AF7 and AF8 regardless of the training sites.');
+  });
+
+  $('rules').addEventListener('click', e => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    const row = b.closest('.rule');
+    commitProtocol({ rules: rulesFromDom(row.dataset.m, b.dataset.mode, Number(row.querySelector('input').value) || 100) });
+  });
+  $('rules').addEventListener('change', e => {
+    const row = e.target.closest('.rule');
+    const current = settings.protocol.rules.find(r => r.measure === row.dataset.m);
+    if (current) commitProtocol({ rules: rulesFromDom(row.dataset.m, current.mode, Number(e.target.value) || 100) });
+  });
+
+  $('holdSec').addEventListener('input', e => commitProtocol({ holdSec: Number(e.target.value) }));
+  seg('difficultyMode', settings.protocol.difficulty.mode, v => commitProtocol({ difficulty: { ...settings.protocol.difficulty, mode: v } }));
+  $('rewardRate').addEventListener('input', e => commitProtocol({ difficulty: { ...settings.protocol.difficulty, rate: Number(e.target.value) / 100 } }));
+
+  $('btnSaveProtocol').addEventListener('click', () => {
+    const name = $('protocolName').value.trim();
+    if (!name) return toast('Give the setup a name first.', true);
+    if (!settings.protocol.rules.length) return toast('Enable at least one rule first.', true);
+    const entry = { ...settings.protocol, name, presetId: null, timer: settings.timer, sensors: [...settings.sensors] };
+    const existing = library.findIndex(x => x.name.toLowerCase() === name.toLowerCase());
+    if (existing === -1 && library.length >= LIBRARY_LIMIT) return toast(`The library holds ${LIBRARY_LIMIT} protocols. Delete one first.`, true);
+    if (existing === -1) library.unshift(entry); else library[existing] = entry;
+    saveLibrary(library);
+    $('protocolName').value = '';
+    renderLibrary();
+    toast(`Saved “${name}”.`);
+  });
+
+  $('library').addEventListener('click', e => {
+    const item = e.target.closest('.item');
+    if (!item) return;
+    const entry = library[Number(item.dataset.i)];
+    if (e.target.closest('.del')) {
+      library.splice(Number(item.dataset.i), 1);
+      saveLibrary(library);
+      return renderLibrary();
+    }
+    settings.protocol = normalizeProtocol(entry);
+    engine.updateProtocol(settings.protocol);
+    if (!clock.active && entry.timer) { settings.timer = normalizeTimer(entry.timer); clock.configure(settings.timer); renderTimer(); }
+    persist();
+    renderProtocol();
+    toast(`Loaded “${entry.name}”.`);
+  });
+}
+
+function renderLibrary() {
+  $('libraryCount').textContent = `${library.length} / ${LIBRARY_LIMIT}`;
+  $('library').innerHTML = library.length ? library.map((x, i) =>
+    `<div class="item" data-i="${i}"><button class="load"><b>${esc(x.name)}</b><span>${esc(describeProtocol(normalizeProtocol(x)))}</span></button><button class="btn ghost icon del" aria-label="Delete ${esc(x.name)}"><i class="ti ti-x"></i></button></div>`).join('')
+    : '<p class="empty">Nothing saved yet. Tune the rules, then name the setup.</p>';
+}
+
+function renderTimer() {
+  const t = settings.timer;
+  $('blocks').value = t.blocks;
+  $('blockMin').value = Math.floor(t.blockSec / 60); $('blockSecs').value = t.blockSec % 60;
+  $('breakMin').value = Math.floor(t.breakSec / 60); $('breakSecs').value = t.breakSec % 60;
+  $('calibrationSec').value = String([10, 20, 30, 60].includes(t.calibrationSec) ? t.calibrationSec : 20);
+  const total = t.blocks * t.blockSec + (t.blocks - 1) * t.breakSec;
+  $('timerSummary').textContent = `${describeTimer(t)} · ${formatClock(total)} planned`;
+  $('timerPresets').innerHTML = TIMER_PRESETS.map(p =>
+    `<button data-id="${p.id}" class="${p.blocks === t.blocks && p.blockSec === t.blockSec && p.breakSec === t.breakSec ? 'active' : ''}">${p.name} · ${describeTimer(p)}</button>`).join('');
+  $('blockDots').innerHTML = t.blocks > 1 ? '<i></i>'.repeat(t.blocks) : '';
+  $('setupLine').textContent = `${settings.sensors.join(' + ')} · ${describeProtocol(settings.protocol)} · ${describeTimer(t)}`;
+  renderControls();
+}
+
+function initTimingPanel() {
+  const commit = (timer) => {
+    if (clock.active) return;
+    settings.timer = normalizeTimer(timer);
+    clock.configure(settings.timer);
+    persist();
+    renderTimer();
+  };
+  $('timerPresets').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (b && !b.disabled) commit({ ...settings.timer, ...TIMER_PRESETS.find(p => p.id === b.dataset.id) });
+  });
+  for (const id of ['blocks', 'blockMin', 'blockSecs', 'breakMin', 'breakSecs', 'calibrationSec']) {
+    $(id).addEventListener('change', () => commit({
+      blocks: $('blocks').value,
+      blockSec: Number($('blockMin').value) * 60 + Number($('blockSecs').value),
+      breakSec: Number($('breakMin').value) * 60 + Number($('breakSecs').value),
+      calibrationSec: $('calibrationSec').value
+    }));
+  }
+}
+
+function applySound() {
+  const s = settings.sound;
+  audio.setMuted(muted || s.mode === 'mute');
+  if (s.mode !== 'mute') audio.setSoundMode(s.mode);
+  audio.setVolume(s.volume);
+  audio.setChimeRate(s.rate);
+  audio.setAmbience(s.ambience);
+  $('muteText').textContent = muted || s.mode === 'mute' ? 'Sound off' : 'Sound on';
+  $('btnMute').querySelector('i').className = `ti ti-volume${muted || s.mode === 'mute' ? '-off' : ''}`;
+  $('btnMute').setAttribute('aria-pressed', String(muted));
+}
+
+function applyPalette() {
+  document.body.dataset.palette = settings.palette;
+  refreshChartTheme();
+  const th = chartTheme();
+  flock?.setPalette({ hue: th.hue, light: th.light });
+  document.querySelector('meta[name="theme-color"]').content = getComputedStyle(document.body).getPropertyValue('--bg').trim();
+  document.querySelectorAll('#palettes button').forEach(b => b.classList.toggle('active', b.dataset.color === settings.palette));
+  spectrogram?.clear();
+  for (const c of [spectrumChart, stripChart]) c?.redraw();
+}
+
+function initFeedbackPanel() {
+  const s = settings.sound;
+  seg('soundMode', s.mode, v => { s.mode = v; if (v !== 'mute') muted = false; applySound(); persist(); });
+  seg('chimeRate', s.rate, v => { s.rate = Number(v); applySound(); persist(); });
+  $('volume').value = Math.round(s.volume * 100);
+  $('volumeLabel').textContent = `${Math.round(s.volume * 100)}%`;
+  $('volume').addEventListener('input', e => { s.volume = Number(e.target.value) / 100; $('volumeLabel').textContent = `${e.target.value}%`; applySound(); persist(); });
+  $('ambience').checked = s.ambience;
+  $('ambience').addEventListener('change', e => { s.ambience = e.target.checked; applySound(); persist(); });
+  $('btnTestSound').addEventListener('click', () => { audio.init(); audio.resume(); applySound(); audio.playChime(); });
+
+  seg('flockVariant', settings.flock.variant, v => { settings.flock.variant = v; flock.setVariant(v); persist(); });
+  $('birdCount').value = settings.flock.count;
+  $('birdLabel').textContent = settings.flock.count;
+  $('birdCount').addEventListener('input', e => { settings.flock.count = Number(e.target.value); $('birdLabel').textContent = e.target.value; flock.setCount(settings.flock.count); persist(); });
+  $('milestoneSec').value = String(settings.milestoneSec);
+  $('milestoneSec').addEventListener('change', e => { settings.milestoneSec = Number(e.target.value); stats.milestones = Math.floor(stats.rewardSec / settings.milestoneSec); persist(); });
+  $('palettes').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    settings.palette = b.dataset.color;
+    applyPalette();
+    persist();
+  });
+}
+
+// ==========================================
+// 6. SIGNAL SOURCES
+// ==========================================
+
+function resetSignal() {
+  for (const ch of channels.values()) ch.reset();
+  engine.resetBaseline();
+  spectrogram.clear();
+  stripChart.clear();
+  features = null;
+}
+
+function setSource(next) {
+  if (clock.active) return toast('Finish the session before switching source.', true);
+  if (next === 'sim' && museConnected) disconnectMuse();
+  source = next;
+  resetSignal();
+  $('musePanel').hidden = next !== 'muse';
+  $('simPanel').hidden = next !== 'sim';
+  document.querySelectorAll('#sourceMode button').forEach(b => b.classList.toggle('active', b.dataset.v === next));
+  renderSource();
+}
+
+function renderSource() {
+  const live = source === 'muse' && museConnected;
+  $('sourceText').textContent = source === 'sim' ? 'Simulated EEG' : live ? 'Live Muse EEG' : 'Muse not connected';
+  $('sourceBadge').classList.toggle('live', live);
+  $('btnDisconnectMuse').hidden = !museConnected;
+  for (const id of ['btnConnectMuse', 'btnHeaderConnectMuse']) {
+    const btn = $(id);
+    btn.hidden = museConnected;
+    btn.disabled = museConnecting;
+    btn.querySelector('span').textContent = museConnecting ? 'Connecting…' : 'Connect Muse';
+  }
+  document.querySelectorAll('#sourceMode button').forEach(btn => { btn.disabled = museConnecting; });
+}
+
+function initSignalPanel() {
+  seg('sourceMode', source, setSource);
+  $('btnConnectMuse').addEventListener('click', connectMuse);
+  $('btnHeaderConnectMuse').addEventListener('click', connectMuse);
+  $('btnDisconnectMuse').addEventListener('click', () => { disconnectMuse(); toast('Muse disconnected.'); });
+
+  $('simStates').innerHTML = Object.entries(SIM_STATES).map(([k, v]) => `<button data-s="${k}" class="${k === sim.state ? 'active' : ''}">${v.label}</button>`).join('');
+  $('simStates').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    sim.configure({ state: b.dataset.s });
+    document.querySelectorAll('#simStates button').forEach(x => x.classList.toggle('active', x === b));
+  });
+  for (const [id, key] of [['simIntensity', 'intensity'], ['simStability', 'stability'], ['simTriad', 'triad']]) {
+    $(id).addEventListener('input', e => { sim.configure({ [key]: Number(e.target.value) / 100 }); $(`${id}Label`).textContent = `${e.target.value}%`; });
+  }
+  $('simArtifacts').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    b.classList.toggle('active');
+    sim.configure({ artifacts: { [b.dataset.a]: b.classList.contains('active') } });
+  });
+
+  $('sensors').innerHTML = CHANNELS.map(name => `<button data-ch="${name}"><b>${name}</b><span>${CHANNEL_INFO[name]}</span><em>off</em></button>`).join('');
+  $('sensors').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const name = b.dataset.ch;
+    const chosen = new Set(settings.sensors);
+    if (chosen.has(name)) {
+      if (chosen.size === 1) return toast('Keep at least one training sensor.');
+      chosen.delete(name);
+    } else {
+      if (channels.get(name).quality.state === 'off') return toast(`${name} is not streaming.`);
+      chosen.add(name);
+    }
+    settings.sensors = CHANNELS.filter(c => chosen.has(c));
+    persist();
+    renderProtocol();
+    if (clock.active) { recalibrate(); toast('Training sensors changed. Recording a new baseline.'); }
+    else engine.resetBaseline();
+  });
+}
+
+async function connectMuse() {
+  if (museConnecting || museConnected) return;
+  if (!navigator.bluetooth) return toast('Web Bluetooth needs Chrome or Edge on desktop or Android.', true);
+  if (source !== 'muse') {
+    setSource('muse');
+    if (source !== 'muse') return;
+  }
+  document.querySelector('.tabs [data-tab="signal"]').click();
+  museConnecting = true;
+  renderSource();
   try {
-    if (museClient) disconnectMuseClient();
+    if (museClient) disconnectMuse();
     museClient = new MuseClient();
+    museClient.enableAux = true;
     await museClient.connect();
     museSubscriptions = [
       museClient.eegReadings.subscribe({
         next: handleMuseReading,
-        error: error => handleMuseStreamError(error)
+        error: err => toast(`EEG stream error: ${err.message || err}`, true)
       }),
-      museClient.telemetryData.subscribe({
-        next: telemetry => { $('museBattery').textContent = `battery ${Math.round(telemetry.batteryLevel)}%`; }
+      museClient.telemetryData.subscribe(t => {
+        $('museInfo').textContent = `${museClient?.deviceName || 'Muse'} · ${FS} Hz · battery ${Math.round(t.batteryLevel)}%`;
       }),
       museClient.connectionStatus.subscribe(connected => {
-        if (!connected && museConnected) handleMuseDisconnected();
+        if (!connected && museConnected) {
+          disconnectMuse();
+          if (clock.active && !clock.paused) { clock.pause(); renderControls(); }
+          toast('Muse disconnected. Session paused.', true);
+        }
       })
     ];
     await museClient.start();
     museConnected = true;
-    inputSource = 'muse';
-    museSamplesReceived = 0;
-    musePacketCount = 0;
-    pendingMusePackets.clear();
-    setMuseStatus(`${museClient.deviceName || 'Muse 2'} connected — waiting for EEG`, true);
-    connectButton.style.display = 'none';
-    $('disconnectMuse').style.display = 'inline-flex';
-    $('go').disabled = true;
-    $('cue').textContent = 'receiving Muse EEG — hold still for a moment';
-    updateSourceBadge();
-    toast('Muse 2 connected. Waiting for one second of EEG.');
-  } catch (error) {
-    const cancelled = error && error.name === 'NotFoundError';
-    setMuseStatus(cancelled ? 'connection cancelled' : `connection failed: ${error.message || error}`, false);
-    toast(cancelled ? 'No Muse selected.' : 'Could not connect to Muse 2.');
-    disconnectMuseClient(false);
+    resetSignal();
+    $('museInfo').textContent = `${museClient.deviceName || 'Muse'} · streaming at ${FS} Hz`;
+    settings.scope.view = 'traces';
+    applyScopeView();
+    toast('Muse connected. Wait for every sensor to read good.');
+  } catch (err) {
+    disconnectMuse();
+    if (err?.name !== 'NotFoundError') toast(`Connection failed: ${err.message || err}`, true);
   } finally {
-    connectButton.disabled = false;
-    connectButton.innerHTML = '<i class="ti ti-bluetooth"></i>Connect Muse 2';
+    museConnecting = false;
+    renderSource();
   }
 }
 
 function handleMuseReading(reading) {
-  if (!museConnected || reading.electrode < 0 || reading.electrode > 3) return;
-  lastMusePacketAt = performance.now();
-  museElectrodeSeenAt[reading.electrode] = lastMusePacketAt;
-  let packet = pendingMusePackets.get(reading.index);
-  if (!packet) {
-    packet = new Array(4);
-    pendingMusePackets.set(reading.index, packet);
-  }
-  packet[reading.electrode] = reading.samples;
-  if (packet.every(Boolean)) {
-    const sampleCount = Math.min(...packet.map(samples => samples.length));
-    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
-      const microvolts = packet.reduce((sum, samples) => sum + samples[sampleIndex], 0) / 4;
-      museDc = museDc * 0.995 + microvolts * 0.005;
-      musePeakMicrovolts = Math.max(musePeakMicrovolts * 0.995, Math.abs(microvolts - museDc));
-      writeRingSample(clamp((microvolts - museDc) / 80, -4, 4));
-      museSamplesReceived++;
-    }
-    musePacketCount++;
-    pendingMusePackets.delete(reading.index);
-    $('musePackets').textContent = `${musePacketCount.toLocaleString()} packets`;
-    if (museSamplesReceived >= FFT_SIZE && $('go').disabled && phase === 'idle') {
-      $('go').disabled = false;
-      $('cue').textContent = 'Muse signal ready — calibrate to begin';
-      setMuseStatus(`${museClient.deviceName || 'Muse 2'} streaming at 256 hz`, true);
-    }
-  }
-  if (pendingMusePackets.size > 24) {
-    const oldest = pendingMusePackets.keys().next().value;
-    pendingMusePackets.delete(oldest);
-  }
+  if (source !== 'muse') return;
+  const name = CHANNELS[reading.electrode];
+  if (name) channels.get(name).push(reading.samples, performance.now());
 }
 
-function handleMuseStreamError(error) {
-  setMuseStatus(`EEG stream error: ${error.message || error}`, false);
-  toast('Muse EEG stream stopped.');
-}
-
-function handleMuseDisconnected() {
-  museConnected = false;
-  inputSource = 'none';
-  setMuseStatus('Muse 2 disconnected', false);
-  $('connectMuse').style.display = 'inline-flex';
-  $('disconnectMuse').style.display = 'none';
-  $('go').disabled = true;
-  resetSession(false);
-  $('go').disabled = true;
-  $('cue').textContent = 'Muse disconnected — reconnect to continue';
-  updateSourceBadge();
-}
-
-function disconnectMuseClient(showToast = true) {
-  museSubscriptions.forEach(subscription => subscription.unsubscribe());
+function disconnectMuse() {
+  museSubscriptions.forEach(s => s.unsubscribe());
   museSubscriptions = [];
-  if (museClient) {
-    try { museClient.disconnect(); } catch (error) { /* already disconnected */ }
-  }
+  try { museClient?.disconnect(); } catch {}
   museClient = null;
   museConnected = false;
-  pendingMusePackets.clear();
-  if (mode === 'muse') inputSource = 'none';
-  setMuseStatus('headset not connected', false);
-  $('connectMuse').style.display = 'inline-flex';
-  $('disconnectMuse').style.display = 'none';
-  if (mode === 'muse') {
-    resetSession(false);
-    $('go').disabled = true;
-    $('cue').textContent = 'connect a Muse 2 to begin';
-  }
-  updateSourceBadge();
-  if (showToast) toast('Muse 2 disconnected.');
+  $('museInfo').textContent = 'Muse 2 or Muse S over Web Bluetooth.';
+  renderSource();
 }
 
-function setMuseStatus(message, connected) {
-  const element = $('museStatus');
-  element.classList.toggle('connected', connected);
-  element.querySelector('span').textContent = message;
+// ==========================================
+// 7. SCOPE, MODALS, JOURNAL
+// ==========================================
+
+function applyScopeView() {
+  const { view, scale } = settings.scope;
+  $('spectrumCanvas').hidden = view !== 'spectrum';
+  $('spectrogramCanvas').hidden = view !== 'spectrogram';
+  $('traceCanvas').hidden = view !== 'traces';
+  $('spectrumScale').hidden = view !== 'spectrum';
+  $('bandLegend').hidden = view === 'traces';
+  $('scopeUnits').textContent = view === 'spectrum' ? `${scale === 'log' ? 'dB re 1 µV²/Hz' : 'µV²/Hz'} · Hz`
+    : view === 'spectrogram' ? 'Hz · darker is stronger' : `last ${TraceChart.SECONDS} s · ±100 µV per lane`;
+  document.querySelectorAll('#scopeView button').forEach(b => b.classList.toggle('active', b.dataset.v === view));
+  for (const c of [spectrumChart, spectrogram, traceChart]) c.fit();
 }
 
-function updateSourceBadge() {
-  const badge = $('srcBadge');
-  const live = mode === 'muse' && museConnected;
-  badge.classList.toggle('hw', live);
-  $('srcTxt').textContent = live ? 'live Muse 2 EEG' : mode === 'muse' ? 'Muse 2 ready' : 'simulated EEG';
+function initScope() {
+  spectrumChart = new SpectrumChart($('spectrumCanvas'));
+  spectrogram = new Spectrogram($('spectrogramCanvas'));
+  traceChart = new TraceChart($('traceCanvas'));
+  stripChart = new StripChart($('stripCanvas'));
+  summaryChart = new StripChart($('summaryCanvas'));
+  trendChart = new TrendChart($('trendCanvas'));
+  spectrumChart.scale = settings.scope.scale;
+  seg('scopeView', settings.scope.view, v => { settings.scope.view = v; applyScopeView(); persist(); });
+  seg('spectrumScale', settings.scope.scale, v => { settings.scope.scale = v; spectrumChart.setScale(v); applyScopeView(); persist(); });
+  $('bandLegend').innerHTML = BANDS.map(b => `<span><i style="background:var(${b.color})"></i>${b.k[0].toUpperCase() + b.k.slice(1)} <em>${b.lo}–${b.hi}</em></span>`).join('');
+  applyScopeView();
 }
 
-addEventListener('beforeunload', () => {
-  if (museClient) museClient.disconnect();
-});
+const showModal = (id) => $(id).classList.add('show');
+const hideModal = (id) => $(id).classList.remove('show');
 
-function setMode(nextMode) {
-  const previousMode = mode;
-  mode = nextMode;
-  document.querySelectorAll('.mode').forEach(button => button.classList.toggle('on', button.dataset.mode === mode));
-  targets = mode === 'resonate' ? [1, 3, 4] : [mode === 'muse' ? 2 : (targets[0] ?? 2)];
-  bandEls.forEach(button => { button.style.opacity = mode === 'resonate' ? '0.55' : '1'; });
-  $('scoreLbl').textContent = mode === 'resonate' ? 'resonance score' : mode === 'muse' ? 'live training score' : 'training score';
-  document.body.classList.toggle('muse-mode', mode === 'muse');
-  if (previousMode === 'muse' && mode !== 'muse' && museConnected) disconnectMuseClient();
-  inputSource = mode === 'muse' ? (museConnected ? 'muse' : 'none') : 'sim';
-  $('spectrumLbl').textContent = mode === 'muse' ? 'live EEG spectrum' : 'live synthetic spectrum';
-  if (mode === 'muse' && !museConnected) clearSignalBuffer();
-  resetSession(false);
-  if (mode === 'muse' && !museConnected) {
-    $('go').disabled = true;
-    $('cue').textContent = 'connect a Muse 2 to begin';
-  }
-  updateSourceBadge();
-  refreshTargets();
+function openSummary(session, fresh = false) {
+  openSessionId = session.id;
+  $('summaryTitle').textContent = fresh ? 'Session complete' : new Date(session.startedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  const setup = session.setup?.protocol ? describeProtocol(normalizeProtocol(session.setup.protocol)) : `${session.protocol} (${session.target})`;
+  $('summarySub').textContent = `${session.source === 'muse' ? 'Muse' : 'Simulated'} · ${(session.sensors || []).join(' + ') || '—'} · ${setup}`;
+  $('sumZone').textContent = `${session.stats.timeInZonePct}%`;
+  $('sumStreak').textContent = `${session.stats.bestStreakSeconds}s`;
+  $('sumTime').textContent = formatClock(session.stats.totalDurationSeconds);
+  $('sumScore').textContent = session.stats.score;
+  $('summaryBlocks').innerHTML = session.blocks.map(b => `<tr>
+    <td>${b.blockNumber}</td><td>${formatClock(b.durationSeconds)}</td>
+    <td>${b.durationSeconds > 0 ? Math.round((b.rewardSeconds / b.durationSeconds) * 100) : 0}%</td>
+    <td>${b.longestStreak.toFixed(1)}s</td><td>${b.recoveries}</td>
+    <td>${b.bandAverages.alpha.toFixed(1)}</td><td>${b.bandAverages.beta.toFixed(1)}</td><td>${b.bandAverages.theta.toFixed(1)}</td></tr>`).join('');
+  $('summaryNotes').value = session.notes || '';
+  showModal('summaryModal');
+  const line = session.timeline;
+  summaryChart.fit();
+  summaryChart.load(line ? line.index.map(v => v / 100) : [], line ? line.reward : [], line?.stepSeconds || 2);
 }
 
-function refreshTargets() {
-  bandEls.forEach((element, index) => element.classList.toggle('on', targets.includes(index)));
-  meterEls.forEach((element, index) => element.classList.toggle('active', targets.includes(index)));
-  if (mode === 'resonate') {
-    $('scopeLbl').textContent = 'resonance \u00B7 7.63 + 19.99 + 32.57 hz';
-    $('targetCnt').textContent = '3 waves';
-  } else {
-    const target = BANDS[targets[0]];
-    $('scopeLbl').textContent = `${mode === 'muse' ? 'live ' : ''}${target.k} \u00B7 ${target.hz}`;
-    $('targetCnt').textContent = mode === 'muse' ? 'Muse 2' : '';
-  }
+function openJournal() {
+  const history = journal.getHistory();
+  $('journalRows').innerHTML = history.length ? history.map(s => `<tr data-id="${s.id}">
+    <td>${new Date(s.startedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</td>
+    <td>${esc(s.setup?.protocol?.name || s.protocol)}</td><td>${s.source === 'muse' ? 'Muse' : 'Sim'}</td>
+    <td>${formatClock(s.stats.totalDurationSeconds)}</td><td>${s.stats.timeInZonePct}%</td>
+    <td>${s.stats.bestStreakSeconds}s</td><td>${s.stats.score}</td></tr>`).join('')
+    : '<tr class="empty"><td colspan="7">No sessions yet. Finish one and it appears here.</td></tr>';
+  const recent = history.slice(0, 30).reverse();
+  $('trendHint').textContent = recent.length ? `last ${recent.length} · oldest to newest` : '';
+  showModal('journalModal');
+  trendChart.fit();
+  trendChart.draw(recent);
 }
 
-let audioContext;
-let voices = [];
-function initAudio() {
-  if (audioContext) return;
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  [220, 330, 440].forEach(base => {
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = base;
-    gain.gain.value = 0;
-    oscillator.connect(gain).connect(audioContext.destination);
-    oscillator.start();
-    voices.push({ oscillator, gain, base });
-  });
+function download(content, fileName, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.download = fileName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-function setTone(level) {
-  if (!audioContext) return;
-  const audible = phase === 'running' && sound;
-  voices.forEach((voice, index) => {
-    const spread = mode === 'resonate' ? 0.88 + index * 0.08 : 1;
-    voice.gain.gain.setTargetAtTime(audible ? 0.018 + level * 0.07 : 0, audioContext.currentTime, 0.12);
-    voice.oscillator.frequency.setTargetAtTime(voice.base * spread * (0.82 + level * 0.58), audioContext.currentTime, 0.12);
-  });
-}
-
-$('tSound').onclick = () => {
-  sound = !sound;
-  $('tSound').classList.toggle('on', sound);
-  if (!sound) setTone(0);
-};
-$('tVisual').onclick = () => {
-  visual = !visual;
-  $('tVisual').classList.toggle('on', visual);
-};
-
-$('go').onclick = () => {
-  if (phase === 'idle' || phase === 'finished') startCalibration();
-  else if (phase === 'running') pauseSession();
-  else if (phase === 'paused') resumeSession();
-};
-$('finish').onclick = finishSession;
-$('reset').onclick = () => resetSession(true);
-$('closeSummary').onclick = () => {
-  $('summaryModal').classList.remove('show');
-  resetSession(false);
-};
-
-function startCalibration() {
-  if (mode === 'muse' && (!museConnected || museSamplesReceived < FFT_SIZE)) {
-    toast('Connect Muse 2 and wait for the EEG signal first.');
-    return;
-  }
-  resetMetrics();
-  initAudio();
-  if (audioContext.state === 'suspended') audioContext.resume();
-  phase = 'calibrating';
-  calibrationStart = performance.now();
-  calibrationValues = [];
-  document.body.classList.add('live', 'session');
-  $('go').disabled = true;
-  $('goTxt').textContent = 'Calibrating 3.0s';
-  $('go').querySelector('i').className = 'ti ti-adjustments-horizontal';
-  $('cue').textContent = 'reading a synthetic baseline\u2026';
-}
-
-function beginTraining() {
-  threshold = clamp(percentile(calibrationValues, 0.62) + 0.025, 0.18, 0.86);
-  phase = 'running';
-  sessionStart = performance.now();
-  $('go').disabled = false;
-  $('goTxt').textContent = 'Pause';
-  $('go').querySelector('i').className = 'ti ti-player-pause';
-  toast(`Baseline set \u00B7 threshold ${Math.round(threshold * 100)}`);
-}
-
-function pauseSession() {
-  elapsed = (performance.now() - sessionStart) / 1000;
-  phase = 'paused';
-  hot = false;
-  setTone(0);
-  $('goTxt').textContent = 'Resume';
-  $('go').querySelector('i').className = 'ti ti-player-play';
-  $('cue').textContent = 'paused \u2014 adjust the simulation or resume';
-  $('cue').classList.remove('hot');
-}
-
-function resumeSession() {
-  phase = 'running';
-  sessionStart = performance.now() - elapsed * 1000;
-  $('goTxt').textContent = 'Pause';
-  $('go').querySelector('i').className = 'ti ti-player-pause';
-}
-
-function finishSession() {
-  if (!['running', 'paused'].includes(phase)) return;
-  if (phase === 'running') elapsed = (performance.now() - sessionStart) / 1000;
-  phase = 'finished';
-  hot = false;
-  setTone(0);
-  document.body.classList.remove('live');
-  $('sumScore').textContent = score;
-  $('sumZone').textContent = `${zoneTotal ? Math.round(zoneHits / zoneTotal * 100) : 0}%`;
-  $('sumStreak').textContent = `${bestStreak.toFixed(1)}s`;
-  const strongest = bandPowers.indexOf(Math.max(...bandPowers));
-  $('sumBand').textContent = BANDS[strongest].k;
-  const sourceLabel = mode === 'muse' ? 'live Muse 2' : STATE_LABELS[mentalState];
-  $('summarySub').textContent = `${mode === 'resonate' ? 'Three-wave resonance' : BANDS[targets[0]].k + ' training'} \u00B7 ${sourceLabel} \u00B7 ${formatTime(elapsed)}`;
-  $('summaryModal').classList.add('show');
-}
-
-function resetMetrics() {
-  score = 0;
-  peak = 0;
-  elapsed = 0;
-  zoneHits = 0;
-  zoneTotal = 0;
-  currentStreak = 0;
-  bestStreak = 0;
-  featureHistory = [];
-  progressHistory = [];
-}
-
-function resetSession(withToast) {
-  phase = 'idle';
-  hot = false;
-  resetMetrics();
-  setTone(0);
-  document.body.classList.remove('live', 'session');
-  $('go').disabled = false;
-  $('goTxt').textContent = 'Calibrate & start';
-  $('go').querySelector('i').className = 'ti ti-player-play';
-  $('cue').textContent = 'choose a state, then calibrate the simulation';
-  $('cue').classList.remove('hot');
-  $('summaryModal').classList.remove('show');
-  if (mode === 'muse' && (!museConnected || museSamplesReceived < FFT_SIZE)) $('go').disabled = true;
-  if (withToast) toast('Session reset.');
-}
-
-const FS = 256;
-const RING_SIZE = 512;
-const FFT_SIZE = 256;
-const ring = new Float32Array(RING_SIZE);
-let ringPosition = 0;
-let generatedSamples = 0;
-let sampleCarry = 0;
-let lastFrameTime = performance.now();
-let bandAmplitudes = STATE_PROFILES.calm.map(value => value * 0.52);
-const bandPhases = BANDS.map(() => Math.random() * Math.PI * 2);
-const resonancePhases = RESONANCE.map(() => Math.random() * Math.PI * 2);
-let pinkA = 0;
-let pinkB = 0;
-let pinkC = 0;
-let blinkRemaining = 0;
-
-function writeRingSample(sample) {
-  ring[ringPosition] = sample;
-  ringPosition = (ringPosition + 1) % RING_SIZE;
-  generatedSamples++;
-}
-
-function clearSignalBuffer() {
-  ring.fill(0);
-  ringPosition = 0;
-  generatedSamples = 0;
-  spectrumValues.fill(0);
-  bandPowers = new Array(5).fill(0);
-}
-
-function generateSignal(deltaSeconds) {
-  sampleCarry += Math.min(deltaSeconds, 0.1) * FS;
-  const count = Math.floor(sampleCarry);
-  sampleCarry -= count;
-  const profile = STATE_PROFILES[mentalState];
-  const calibrationEffort = phase === 'calibrating' ? 0.28 : effort;
-  const noisiness = 1 - stability;
-  const desired = profile.map((value, index) => {
-    const selected = mode === 'single' && targets.includes(index);
-    return 0.10 + value * 0.42 + (selected ? calibrationEffort * 0.52 : 0);
-  });
-  for (let index = 0; index < 5; index++) bandAmplitudes[index] += (desired[index] - bandAmplitudes[index]) * 0.015;
-
-  for (let sampleIndex = 0; sampleIndex < count; sampleIndex++) {
-    let sample = 0;
-    for (let bandIndex = 0; bandIndex < BANDS.length; bandIndex++) {
-      bandPhases[bandIndex] += Math.PI * 2 * BANDS[bandIndex].center / FS;
-      sample += Math.sin(bandPhases[bandIndex]) * bandAmplitudes[bandIndex];
-    }
-    if (mode === 'resonate') {
-      RESONANCE.forEach((frequency, index) => {
-        resonancePhases[index] += Math.PI * 2 * frequency / FS;
-        const wobble = 0.86 + Math.sin(generatedSamples / FS * (0.21 + index * 0.04) + index) * noisiness * 0.28;
-        sample += Math.sin(resonancePhases[index]) * (0.12 + calibrationEffort * 0.58) * wobble;
-      });
-    }
-    const white = Math.random() * 2 - 1;
-    pinkA = 0.99765 * pinkA + white * 0.099046;
-    pinkB = 0.963 * pinkB + white * 0.2965164;
-    pinkC = 0.57 * pinkC + white * 1.0526913;
-    sample += (pinkA + pinkB + pinkC + white * 0.1848) * (0.018 + noisiness * 0.055);
-
-    if (artifacts.blink && blinkRemaining <= 0 && Math.random() < 0.0008) blinkRemaining = 84;
-    if (blinkRemaining > 0) {
-      sample += Math.sin(Math.PI * (1 - blinkRemaining / 84)) * 1.8;
-      blinkRemaining--;
-    }
-    if (artifacts.muscle) sample += (Math.random() * 2 - 1) * 0.38 * Math.sin(generatedSamples * 1.37);
-    if (artifacts.mains) sample += Math.sin(Math.PI * 2 * 50 * generatedSamples / FS) * 0.32;
-
-    writeRingSample(sample);
-  }
-}
-
-const hann = Array.from({ length: FFT_SIZE }, (_, index) => 0.5 * (1 - Math.cos(Math.PI * 2 * index / (FFT_SIZE - 1))));
-const hannSum = hann.reduce((sum, value) => sum + value, 0);
-const spectrumValues = new Array(51).fill(0);
-let bandPowers = new Array(5).fill(0.1);
-let spectrumTick = 0;
-
-function ringSample(index) {
-  const start = (ringPosition - FFT_SIZE + RING_SIZE) % RING_SIZE;
-  return ring[(start + index) % RING_SIZE];
-}
-
-function magnitudeAt(frequency) {
-  let real = 0;
-  let imaginary = 0;
-  const omega = Math.PI * 2 * frequency / FS;
-  for (let index = 0; index < FFT_SIZE; index++) {
-    const sample = ringSample(index) * hann[index];
-    real += sample * Math.cos(omega * index);
-    imaginary -= sample * Math.sin(omega * index);
-  }
-  return Math.sqrt(real * real + imaginary * imaginary) * 2 / hannSum;
-}
-
-function analyzeSignal() {
-  for (let frequency = 1; frequency <= 50; frequency++) spectrumValues[frequency] = magnitudeAt(frequency);
-  bandPowers = BANDS.map(band => {
-    let energy = 0;
-    let count = 0;
-    for (let frequency = Math.max(1, Math.ceil(band.lo)); frequency <= Math.floor(band.hi); frequency++) {
-      energy += spectrumValues[frequency] * spectrumValues[frequency];
-      count++;
-    }
-    return clamp(Math.sqrt(energy / Math.max(1, count)) / 0.56);
-  });
-
-  if (mode === 'resonate') {
-    const harmonics = RESONANCE.map(frequency => clamp(magnitudeAt(frequency) / 0.76));
-    const balance = Math.min(...harmonics) / Math.max(0.01, Math.max(...harmonics));
-    const energy = harmonics.reduce((sum, value) => sum + value, 0) / harmonics.length;
-    feature = clamp(energy * 0.72 + balance * 0.28);
-  } else {
-    feature = bandPowers[targets[0]];
-  }
-  handleFeedbackTick();
-}
-
-function handleFeedbackTick() {
-  if (phase === 'calibrating') {
-    calibrationValues.push(feature);
-    const remaining = Math.max(0, 3 - (performance.now() - calibrationStart) / 1000);
-    $('goTxt').textContent = `Calibrating ${remaining.toFixed(1)}s`;
-    $('cue').textContent = `sampling baseline \u00B7 ${remaining.toFixed(1)} seconds`;
-    if (remaining <= 0 && calibrationValues.length > 8) beginTraining();
-    return;
-  }
-  if (phase !== 'running') return;
-
-  elapsed = (performance.now() - sessionStart) / 1000;
-  hot = feature > threshold;
-  zoneTotal++;
-  if (hot) {
-    zoneHits++;
-    currentStreak += 0.1;
-    bestStreak = Math.max(bestStreak, currentStreak);
-    score = Math.min(99999, score + Math.max(1, Math.round((feature - threshold) * 95)));
-  } else {
-    currentStreak = 0;
-  }
-  peak = Math.max(peak, score);
-  featureHistory.push(feature);
-  if (featureHistory.length > 300) featureHistory.shift();
-  progressHistory.push(feature);
-  if (progressHistory.length > 240) progressHistory.shift();
-  if (zoneTotal % 50 === 0 && featureHistory.length > 40) {
-    const adaptiveTarget = percentile(featureHistory, 0.58);
-    threshold += (adaptiveTarget - threshold) * 0.16;
-  }
-}
-
-const scope = $('scope');
-const scopeContext = scope.getContext('2d');
-const bloom = $('bloom');
-const bloomContext = bloom.getContext('2d');
-const progress = $('prog');
-const progressContext = progress.getContext('2d');
-const spectrum = $('spectrum');
-const spectrumContext = spectrum.getContext('2d');
-let scopeRect;
-let bloomRect;
-let progressRect;
-let spectrumRect;
-let bloomLevel = 0;
-let sparks = [];
-
-function fit(canvas) {
-  const rect = canvas.getBoundingClientRect();
-  const density = Math.min(devicePixelRatio || 1, 2);
-  canvas.width = rect.width * density;
-  canvas.height = rect.height * density;
-  canvas.getContext('2d').setTransform(density, 0, 0, density, 0, 0);
-  return rect;
-}
-function fitCanvases() {
-  scopeRect = fit(scope);
-  bloomRect = fit(bloom);
-  progressRect = fit(progress);
-  spectrumRect = fit(spectrum);
-}
-addEventListener('resize', fitCanvases);
-
-function drawScope() {
-  const width = scopeRect.width;
-  const height = scopeRect.height;
-  scopeContext.clearRect(0, 0, width, height);
-  scopeContext.strokeStyle = 'rgba(255,255,255,0.035)';
-  scopeContext.lineWidth = 1;
-  for (let y = 0; y < height; y += 25) {
-    scopeContext.beginPath();
-    scopeContext.moveTo(0, y);
-    scopeContext.lineTo(width, y);
-    scopeContext.stroke();
-  }
-  scopeContext.beginPath();
-  let maxSample = 0;
-  const samplesShown = Math.min(384, generatedSamples);
-  for (let x = 0; x < width; x++) {
-    const offset = Math.floor(x / width * Math.max(1, samplesShown - 1));
-    const ringIndex = (ringPosition - samplesShown + offset + RING_SIZE) % RING_SIZE;
-    const value = ring[ringIndex];
-    maxSample = Math.max(maxSample, Math.abs(value));
-    const y = height / 2 - value * height * 0.19;
-    if (x === 0) scopeContext.moveTo(x, y); else scopeContext.lineTo(x, y);
-  }
-  const color = cssVar(BANDS[targets[0]].c);
-  scopeContext.strokeStyle = color;
-  scopeContext.shadowColor = color;
-  scopeContext.shadowBlur = phase === 'running' ? 8 : 3;
-  scopeContext.lineWidth = 1.7;
-  scopeContext.stroke();
-  scopeContext.shadowBlur = 0;
-  $('scopeNow').textContent = inputSource === 'none' ? '-- \u00B5V' : `${(inputSource === 'muse' ? musePeakMicrovolts : maxSample * 26).toFixed(1)} \u00B5V`;
-}
-
-function drawSpectrum() {
-  const width = spectrumRect.width;
-  const height = spectrumRect.height;
-  spectrumContext.clearRect(0, 0, width, height);
-  spectrumContext.fillStyle = 'rgba(255,255,255,.025)';
-  for (let frequency = 10; frequency <= 50; frequency += 10) spectrumContext.fillRect(frequency / 50 * width, 0, 1, height);
-  const gradient = spectrumContext.createLinearGradient(0, 0, width, 0);
-  BANDS.forEach((band, index) => gradient.addColorStop(index / 4, cssVar(band.c)));
-  spectrumContext.beginPath();
-  spectrumContext.moveTo(0, height);
-  for (let frequency = 1; frequency <= 50; frequency++) {
-    const x = frequency / 50 * width;
-    const y = height - 8 - clamp(spectrumValues[frequency] / 1.25) * (height - 28);
-    spectrumContext.lineTo(x, y);
-  }
-  spectrumContext.lineTo(width, height);
-  spectrumContext.closePath();
-  spectrumContext.globalAlpha = 0.18;
-  spectrumContext.fillStyle = gradient;
-  spectrumContext.fill();
-  spectrumContext.globalAlpha = 1;
-  spectrumContext.beginPath();
-  for (let frequency = 1; frequency <= 50; frequency++) {
-    const x = frequency / 50 * width;
-    const y = height - 8 - clamp(spectrumValues[frequency] / 1.25) * (height - 28);
-    if (frequency === 1) spectrumContext.moveTo(x, y); else spectrumContext.lineTo(x, y);
-  }
-  spectrumContext.strokeStyle = cssVar('--mint');
-  spectrumContext.lineWidth = 1.5;
-  spectrumContext.stroke();
-  if (mode === 'resonate') {
-    spectrumContext.setLineDash([3, 3]);
-    RESONANCE.forEach(frequency => {
-      const x = frequency / 50 * width;
-      spectrumContext.beginPath();
-      spectrumContext.moveTo(x, 20);
-      spectrumContext.lineTo(x, height);
-      spectrumContext.strokeStyle = 'rgba(242,178,92,.65)';
-      spectrumContext.stroke();
+function initModals() {
+  document.querySelectorAll('.modal').forEach(modal => {
+    modal.addEventListener('click', e => {
+      if (e.target === modal || e.target.closest('[data-close]')) modal.classList.remove('show');
     });
-    spectrumContext.setLineDash([]);
-  }
-}
-
-function drawBloom() {
-  const targetLevel = phase === 'running' ? (hot ? 0.55 + feature * 0.45 : feature * 0.46) : 0;
-  bloomLevel += (targetLevel - bloomLevel) * 0.08;
-  const width = bloomRect.width;
-  const height = bloomRect.height;
-  bloomContext.clearRect(0, 0, width, height);
-  if (!visual) return;
-  const centerX = width / 2;
-  const centerY = height * 0.45;
-  const color = cssVar(BANDS[targets[0]].c);
-  for (let ringIndex = 3; ringIndex >= 0; ringIndex--) {
-    const radius = (24 + ringIndex * 30) * (0.6 + bloomLevel * 1.5);
-    bloomContext.beginPath();
-    bloomContext.arc(centerX, centerY, radius, 0, Math.PI * 2);
-    bloomContext.fillStyle = hexAlpha(color, (0.05 + bloomLevel * 0.13) * (1 - ringIndex * 0.22));
-    bloomContext.fill();
-  }
-  bloomContext.beginPath();
-  bloomContext.arc(centerX, centerY, 18 + bloomLevel * 34, 0, Math.PI * 2);
-  bloomContext.fillStyle = hexAlpha(color, 0.22 + bloomLevel * 0.55);
-  bloomContext.shadowColor = color;
-  bloomContext.shadowBlur = bloomLevel * 40;
-  bloomContext.fill();
-  bloomContext.shadowBlur = 0;
-  if (hot && phase === 'running' && Math.random() < 0.35) {
-    const angle = Math.random() * Math.PI * 2;
-    sparks.push({ x: centerX, y: centerY, vx: Math.cos(angle) * (1 + Math.random() * 2.5), vy: Math.sin(angle) * (1 + Math.random() * 2.5), life: 1 });
-  }
-  sparks.forEach(spark => {
-    spark.x += spark.vx;
-    spark.y += spark.vy;
-    spark.life = Math.max(0, spark.life - 0.02);
-    bloomContext.beginPath();
-    bloomContext.arc(spark.x, spark.y, 2 * spark.life, 0, Math.PI * 2);
-    bloomContext.fillStyle = hexAlpha(color, spark.life * 0.8);
-    bloomContext.fill();
   });
-  sparks = sparks.filter(spark => spark.life > 0);
-}
-
-function drawProgress() {
-  const width = progressRect.width;
-  const height = progressRect.height;
-  progressContext.clearRect(0, 0, width, height);
-  const thresholdY = height - threshold * (height - 8) - 4;
-  progressContext.strokeStyle = 'rgba(255,255,255,.14)';
-  progressContext.setLineDash([4, 4]);
-  progressContext.beginPath();
-  progressContext.moveTo(0, thresholdY);
-  progressContext.lineTo(width, thresholdY);
-  progressContext.stroke();
-  progressContext.setLineDash([]);
-  if (progressHistory.length < 2) return;
-  const xAt = index => index / (progressHistory.length - 1) * width;
-  const yAt = value => height - value * (height - 8) - 4;
-  const color = cssVar(BANDS[targets[0]].c);
-  progressContext.beginPath();
-  progressContext.moveTo(0, height);
-  progressHistory.forEach((value, index) => progressContext.lineTo(xAt(index), yAt(value)));
-  progressContext.lineTo(width, height);
-  progressContext.closePath();
-  progressContext.fillStyle = hexAlpha(color, 0.12);
-  progressContext.fill();
-  progressContext.beginPath();
-  progressHistory.forEach((value, index) => index ? progressContext.lineTo(xAt(index), yAt(value)) : progressContext.moveTo(xAt(index), yAt(value)));
-  progressContext.strokeStyle = color;
-  progressContext.lineWidth = 2;
-  progressContext.stroke();
-}
-
-function updateReadouts() {
-  bandEls.forEach((element, index) => { element.querySelector('.bar>i').style.width = `${bandPowers[index] * 100}%`; });
-  meterBars.forEach((meter, index) => {
-    meter.history.push(bandPowers[index]);
-    meter.history.shift();
-    meter.bars.forEach((bar, barIndex) => { bar.style.height = `${6 + meter.history[barIndex] * 40}px`; });
-    meter.value.textContent = Math.round(bandPowers[index] * 100);
-  });
-  const scoreElement = $('score');
-  scoreElement.textContent = score;
-  scoreElement.classList.toggle('hot', hot);
-  $('statPeak').textContent = peak;
-  $('statTime').textContent = formatTime(elapsed);
-  const average = progressHistory.length ? progressHistory.reduce((sum, value) => sum + value, 0) / progressHistory.length : 0;
-  $('progAvg').textContent = `avg ${Math.round(average * 100)}`;
-  $('progTip').textContent = `time in zone ${zoneTotal ? Math.round(zoneHits / zoneTotal * 100) : 0}%`;
-  if (phase === 'running') {
-    const name = mode === 'resonate' ? 'resonance' : BANDS[targets[0]].k;
-    $('cue').classList.toggle('hot', hot);
-    $('cue').textContent = hot ? `in the zone \u2014 hold the ${name}` : feature > threshold * 0.82 ? 'getting warmer\u2026' : `quiet \u2014 raise the ${name}`;
-  }
-  setTone(feature);
-  if (mode === 'muse') {
-    const now = performance.now();
-    document.querySelectorAll('.channel').forEach(element => {
-      const electrode = Number(element.dataset.electrode);
-      element.classList.toggle('live', now - museElectrodeSeenAt[electrode] < 750);
+  $('btnJournal').addEventListener('click', openJournal);
+  $('btnHelp').addEventListener('click', () => showModal('helpModal'));
+  const renderDocs = (page) => {
+    $('docsContent').innerHTML = marked.parse(page === 'guide' ? quickStart : readme);
+    $('docsContent').scrollTop = 0;
+    document.querySelectorAll('#docsPages button').forEach(btn => {
+      const active = btn.dataset.page === page;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
     });
-  }
+    $('docsContent').querySelectorAll('a').forEach(link => {
+      if (link.getAttribute('href') === 'docs/quick-start.md') {
+        link.addEventListener('click', e => { e.preventDefault(); renderDocs('guide'); });
+      } else {
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      }
+    });
+  };
+  $('btnDocs').addEventListener('click', () => {
+    renderDocs('readme');
+    $('docsDialog').showModal();
+  });
+  $('btnCloseDocs').addEventListener('click', () => $('docsDialog').close());
+  $('docsPages').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-page]');
+    if (btn) renderDocs(btn.dataset.page);
+  });
+  $('journalRows').addEventListener('click', e => {
+    const session = journal.getHistory().find(s => s.id === e.target.closest('tr')?.dataset.id);
+    if (session) { hideModal('journalModal'); openSummary(session); }
+  });
+  $('btnSaveNotes').addEventListener('click', () => {
+    toast(journal.setNotes(openSessionId, $('summaryNotes').value) ? 'Notes saved.' : 'Could not save notes.', false);
+    hideModal('summaryModal');
+  });
+  $('btnDeleteSession').addEventListener('click', () => {
+    if (!confirm('Delete this journal entry?')) return;
+    journal.deleteSession(openSessionId);
+    hideModal('summaryModal');
+    toast('Entry deleted.');
+  });
+  $('btnExportCSV').addEventListener('click', () => download(journal.exportCSV(), 'resonance_sessions.csv', 'text/csv'));
+  $('btnExportJSON').addEventListener('click', () => download(journal.exportJSON(), 'resonance_sessions.json', 'application/json'));
+  $('btnClearJournal').addEventListener('click', () => {
+    if (!confirm('Clear every saved session from this browser?')) return;
+    journal.clearHistory();
+    openJournal();
+  });
+
+  const welcomed = () => { settings.welcomed = true; persist(); hideModal('welcomeModal'); };
+  $('btnWelcomeDemo').addEventListener('click', () => { welcomed(); startSession(); });
+  $('btnWelcomeMuse').addEventListener('click', () => {
+    welcomed();
+    document.querySelector('.tabs [data-tab="signal"]').click();
+    setSource('muse');
+  });
+  if (!settings.welcomed) showModal('welcomeModal');
 }
 
-function frame(now) {
-  const deltaSeconds = (now - lastFrameTime) / 1000;
-  lastFrameTime = now;
-  if (inputSource === 'sim') generateSignal(deltaSeconds);
-  spectrumTick += deltaSeconds;
-  if (spectrumTick >= 0.1 && generatedSamples >= FFT_SIZE) {
-    spectrumTick = 0;
-    analyzeSignal();
-  }
-  if (phase === 'running') elapsed = (performance.now() - sessionStart) / 1000;
-  drawScope();
-  drawSpectrum();
-  drawBloom();
-  drawProgress();
-  updateReadouts();
+// ==========================================
+// 8. WEB MCP
+// ==========================================
+
+function initMCP() {
+  registerResonanceMCP({
+    getState: () => ({
+      mode: source,
+      phase: clock.paused ? 'paused' : clock.phase,
+      protocol: settings.protocol.presetId || 'custom',
+      target: describeProtocol(settings.protocol),
+      score: Math.round(stats.score),
+      timeInZonePct: stats.usable > 0 ? Math.round((stats.rewardSec / stats.usable) * 100) : 0,
+      currentStreak: stats.streak,
+      bestStreak: stats.bestStreak,
+      electrodeQuality: Object.fromEntries([...channels].map(([k, v]) => [k, v.quality.state]))
+    }),
+    setProtocol: (id) => {
+      const preset = PRESETS.find(p => p.id === id);
+      if (!preset) return false;
+      commitProtocol({ presetId: preset.id, name: preset.name, rules: preset.rules.map(r => ({ ...r })), holdSec: preset.holdSec }, { fromPreset: true });
+      return true;
+    },
+    setSimulation: (args) => sim.configure({ state: args.mentalState, intensity: args.intensity, stability: args.stability })
+  });
+}
+
+// ==========================================
+// 9. BOOT
+// ==========================================
+
+function init() {
+  document.body.dataset.palette = settings.palette;
+  const th = chartTheme();
+  flock = new FlockCanvas($('stageCanvas'), { count: settings.flock.count, variant: settings.flock.variant, hue: th.hue, light: th.light });
+  flock.start();
+
+  initScope();
+  document.querySelector('.tabs').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('active', x === b));
+    document.querySelectorAll('.tabpanel').forEach(p => p.classList.toggle('active', p.dataset.panel === b.dataset.tab));
+    $('protocolShortcuts').hidden = b.dataset.tab !== 'protocol';
+    b.closest('.rail').scrollTop = 0;
+  });
+  initProtocolPanel();
+  initTimingPanel();
+  initFeedbackPanel();
+  initSignalPanel();
+  initModals();
+  initMCP();
+
+  renderProtocol();
+  renderLibrary();
+  renderTimer();
+  renderSource();
+  applyPalette();
+  applySound();
+
+  $('btnGo').addEventListener('click', togglePause);
+  $('btnFinish').addEventListener('click', finishEarly);
+  $('btnRecalibrate').addEventListener('click', recalibrate);
+  $('btnMute').addEventListener('click', () => { muted = !muted; applySound(); });
+  const renderFullscreen = () => {
+    const active = document.fullscreenElement === $('stage');
+    const btn = $('btnFullscreen');
+    $('fullscreenHint').hidden = false;
+    $('fullscreenHint').textContent = active ? 'Exit fullscreen' : 'Try fullscreen';
+    btn.classList.toggle('fullscreen-invite', !active);
+    btn.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen');
+    btn.title = active ? 'Exit fullscreen (Esc or F)' : 'Fullscreen (F)';
+    btn.querySelector('i').className = active ? 'ti ti-minimize' : 'ti ti-maximize';
+    btn.hidden = !document.fullscreenEnabled;
+  };
+  const fullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await $('stage').requestFullscreen();
+    } catch {
+      toast('Could not open fullscreen. Try the fullscreen button again.', true);
+    }
+  };
+  document.addEventListener('fullscreenchange', renderFullscreen);
+  renderFullscreen();
+  $('btnFullscreen').addEventListener('click', fullscreen);
+  document.addEventListener('keydown', e => {
+    if ($('docsDialog').open) return;
+    if (e.target.closest('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (document.querySelector('.modal.show')) { if (e.key === 'Escape') document.querySelectorAll('.modal.show').forEach(m => m.classList.remove('show')); return; }
+    if (e.code === 'Space') { if (e.target.closest('button')) return; e.preventDefault(); togglePause(); }
+    else if (e.key === 'f') fullscreen();
+    else if (e.key === 'm') { muted = !muted; applySound(); }
+  });
+
   requestAnimationFrame(frame);
+
+  // Dev-only hook: advance the pipeline without animation frames (headless checks, hidden tabs).
+  if (import.meta.env?.DEV) {
+    window.__resonance = {
+      flock,
+      advance(seconds) { for (let i = 0; i < seconds * 60; i++) step(lastFrame + 1000 / 60); },
+      snapshot: () => ({ phase: clock.phase, block: clock.block, paused: clock.paused, signal, calibrated: engine.calibrated, reward: result?.reward, stats: { ...stats }, rows: result?.rows.map(r => ({ m: r.measure, pct: r.pct, target: r.target, pass: r.pass })) })
+    };
+  }
 }
 
-function toast(message) {
-  const element = $('toast');
-  element.textContent = message;
-  element.classList.add('show');
-  clearTimeout(element._timer);
-  element._timer = setTimeout(() => element.classList.remove('show'), 3000);
-}
-
-function formatTime(seconds) {
-  seconds = Math.floor(seconds);
-  return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
-}
-
-function hexAlpha(hex, alpha) {
-  const clean = hex.replace('#', '');
-  const number = parseInt(clean, 16);
-  return `rgba(${(number >> 16) & 255},${(number >> 8) & 255},${number & 255},${alpha})`;
-}
-
-fitCanvases();
-setMode('single');
-requestAnimationFrame(frame);
+window.addEventListener('DOMContentLoaded', init);

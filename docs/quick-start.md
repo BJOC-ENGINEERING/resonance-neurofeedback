@@ -27,7 +27,7 @@ The badge reads **Live Muse EEG** once connected; click it to open the Signal pa
 ## Start a session
 
 1. In **Protocol**, choose a preset such as **Calm focus**.
-2. Use **Timing** to set blocks, breaks, and baseline duration. Use **Feedback** to adjust sound and the flock.
+2. Use **Session** to set blocks, breaks, and baseline duration. Use **Feedback** to adjust sound and the flock.
 3. Click **Start session**. Remain still while the app records your baseline; the default headset baseline is 20 seconds.
 4. Training starts automatically. The flock and sound respond when all enabled rules meet their targets. If **Hold** is set, they must stay in target for that duration first.
 
@@ -63,7 +63,7 @@ The original Muse (2016) has no pulse sensor. Protocols with heart coherence nee
 
 ## Test whether it works for you
 
-Under **Timing → Self-experiment**:
+Under **Session → Self-experiment**:
 
 - **Check in before and after** asks you to rate how calm and alert you feel (1–7) and runs a 60 second reaction test. When the counter appears, press **Space** or tap it as fast as you can.
 - **Blinded sham sessions** makes 1 in 3, or 1 in 2, of your sessions sham. A sham session looks and sounds normal, but its feedback replays your usual reward pattern instead of following your signal. The rule readout and coherence are hidden during every blinded session, so neither kind gives itself away. Keep the side panels folded while you train.

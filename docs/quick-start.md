@@ -16,13 +16,13 @@ Use Node.js 20.19 or newer. Open the URL printed in the terminal, usually [local
 ## Connect your Muse
 
 1. Turn on your Muse 2 or Muse S and your computer's Bluetooth.
-2. Click **Connect Muse** in the top bar, beside the source status. This selects the headset source and opens the connection flow.
+2. Click **Connect** on the source badge in the top bar. This selects the headset source and opens the connection flow.
 3. Choose your Muse in the browser's Bluetooth picker.
 4. Fit the headset just above your brow and check **Traces** and the **Sensors** card. Wait for your selected training sensors to read **GOOD**.
 
 You can also connect through **Signal → Muse headset → Connect Muse** in the setup panel. The numbered steps at the top are progress indicators; the **Signal** tab is beside **Feedback** in the setup panel.
 
-The badge reads **Live Muse EEG** once connected. To disconnect, use **Disconnect** in the Signal panel.
+The badge reads **Live Muse EEG** once connected; click it to open the Signal panel. To disconnect, use **Disconnect** there.
 
 ## Start a session
 
@@ -35,9 +35,9 @@ Targets are relative to your baseline: an upward target of 105% means at least 5
 
 The Protocol panel keeps **Presets**, **Hold & difficulty**, **Saved**, and **Rules** shortcuts at the top as you scroll. Hold and difficulty sit together under **Make it your own**, above the rules. Use **Saved** to name and save a setup.
 
-Use **Space** to start or pause, **F** for fullscreen, and **M** to mute. Open **Journal** to review sessions, add notes, or export CSV/JSON.
+Use **Space** to start or pause, **F** for fullscreen, **M** to mute, **P** to show or hide the side panels, and **?** for these docs. Open **Journal** to review sessions, add notes, or export CSV/JSON.
 
-For a more immersive view, click **Try fullscreen** in the upper-right corner of the flock. This button stays visible with a soft green glow whenever you are outside fullscreen. In fullscreen, click **Exit fullscreen** or press **Esc** to return.
+For a more immersive view, click **Try fullscreen** in the upper-right corner of the flock. After your first use it shrinks to an icon. In fullscreen, click **Exit fullscreen** or press **Esc** to return.
 
 ## Personal alpha bands
 
@@ -72,12 +72,12 @@ After a blinded session you are asked whether you think it was real or sham, and
 
 ## Return to the main screen
 
-- **Documentation:** click **Docs** in the top bar to read the README or this quick-start guide in a popup. Close it with **×** or **Esc**.
+- **Documentation:** click **Docs** in the top bar, or press **?**, to read how it works, the README or this guide in a popup. Close it with **×** or **Esc**.
 - **From fullscreen:** press **Esc** or **F** to return to the studio controls.
 - **During a session:** click **Finish** below the flock to end the session, then close the summary with **×** or **Esc**. You can choose another protocol or source from the setup panel.
-- **From Journal or Help:** click **×**, press **Esc**, or click outside the popup.
+- **From Journal:** click **×**, press **Esc**, or click outside the popup.
 
-The studio is the main screen. The initial welcome screen with **Try the demo** and **Connect a Muse** currently has no reopen button; use **Signal → Simulated** or the top-bar **Connect Muse** button for those options.
+The studio is the main screen. The initial welcome screen with **Try the demo** and **Connect a Muse** currently has no reopen button; use **Signal → Simulated** or the source badge in the top bar for those options.
 
 ## Try without a headset
 

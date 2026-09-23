@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import readme from './README.md?raw';
 import quickStart from './docs/quick-start.md?raw';
 import featureList from './docs/features.md?raw';
+import howItWorks from './docs/how-it-works.md?raw';
 import { FS, CHANNELS, CHANNEL_INFO, WINDOW, BANDS, psd, peakFrequency, Channel, assessQuality, DEFAULT_QUALITY_LIMITS, personalBands, estimateAlphaPeak } from './src/dsp.js';
 import { ProtocolEngine, computeFeatures, compositeSpectrum, normalizeProtocol, describeProtocol, needsEeg, needsHeart, MEASURES, MEASURE_BY_KEY, PRESETS, DEFAULT_PROTOCOL } from './src/protocol.js';
 import { SessionClock, normalizeTimer, describeTimer, formatClock, TIMER_PRESETS, DEFAULT_TIMER } from './src/session.js';
@@ -52,7 +53,8 @@ const settings = {
   milestoneSec: saved.milestoneSec || 5,
   scope: { view: 'spectrum', scale: 'linear', ...saved.scope },
   scene: { mode: 'flock', floor: 0.25, youtube: '', ...saved.scene },
-  focus: saved.focus ?? true,
+  showPanels: saved.showPanels ?? saved.focus === false,
+  fullscreenUsed: !!saved.fullscreenUsed,
   breath: normalizeBreath(saved.breath),
   bands: { personal: false, iaf: null, strength: null, measuredAt: null, source: null, ...saved.bands },
   assessSec: saved.assessSec === 120 ? 120 : 60,
@@ -96,10 +98,10 @@ let starting = false;     // a check-in is open before the session
 let features = null;
 let signal = 'none';      // 'ok' | 'artifact' | 'bad' | 'none'
 let artifactUntil = 0;
-let muted = false;
+let muted = saved.sound?.mode === 'mute';
+if (settings.sound.mode === 'mute') settings.sound.mode = 'chime';
 let openSessionId = null;
 let pendingStart = false; // start requested before the first analysis window filled
-let showPanels = false;   // user reopened the rails during a focused session
 const stats = { usable: 0, rewardSec: 0, trueRewardSec: 0, streak: 0, bestStreak: 0, score: 0, milestones: 0 };
 
 const activeBands = () => settings.bands.personal && Number.isFinite(settings.bands.iaf) ? personalBands(settings.bands.iaf) : BANDS;
@@ -623,13 +625,10 @@ function renderLive(rewarded, { wantEeg = true, wantHeart = false, sourcesContac
     : 'Percent of a drifting reference until you record a baseline.';
 
   // Tiles and milestones
-  $('statZone').textContent = `${stats.usable > 0 ? Math.round((stats.rewardSec / stats.usable) * 100) : 0}%`;
-  $('statStreak').textContent = `${stats.bestStreak.toFixed(1)}s`;
-  $('statEarned').textContent = formatClock(Math.floor(stats.rewardSec));
-  $('statScore').textContent = Math.round(stats.score);
-  $('hudZone').textContent = $('statZone').textContent;
-  $('hudStreak').textContent = $('statStreak').textContent;
-  $('hudScore').textContent = $('statScore').textContent;
+  $('hudZone').textContent = `${stats.usable > 0 ? Math.round((stats.rewardSec / stats.usable) * 100) : 0}%`;
+  $('hudStreak').textContent = `${stats.bestStreak.toFixed(1)}s`;
+  $('hudEarned').textContent = formatClock(Math.floor(stats.rewardSec));
+  $('hudScore').textContent = Math.round(stats.score);
   const marks = $('milestoneMarks');
   const shown = Math.min(stats.milestones, 12);
   if (marks.dataset.n !== String(stats.milestones)) {
@@ -638,7 +637,7 @@ function renderLive(rewarded, { wantEeg = true, wantHeart = false, sourcesContac
       + (stats.milestones > 12 ? `<span>+${stats.milestones - 12}</span>` : '');
   }
   const toNext = settings.milestoneSec - (stats.rewardSec % settings.milestoneSec);
-  $('milestoneText').textContent = `next mark in ${toNext.toFixed(0)} s rewarded`;
+  marks.title = `Milestones · next in ${toNext.toFixed(0)} s rewarded`;
 
   // Sensors and steps
   document.querySelectorAll('#sensors button').forEach(btn => {
@@ -709,19 +708,20 @@ function renderControls() {
 // Focus mode: while a session runs, the rails fold away unless the viewer asks for them.
 function renderFocus() {
   const running = (clock.active && !clock.paused) || !!procedure;
-  if (!clock.active && !procedure) showPanels = false;
-  document.body.classList.toggle('focus', settings.focus && running && !showPanels);
+  document.body.classList.toggle('focus', running && !settings.showPanels);
   const btn = $('btnPanels');
-  btn.hidden = !(settings.focus && running);
-  btn.setAttribute('aria-pressed', String(showPanels));
-  $('panelsText').textContent = showPanels ? 'Hide panels' : 'Show panels';
-  btn.querySelector('i').className = `ti ti-layout-sidebar-left-${showPanels ? 'collapse' : 'expand'}`;
+  btn.hidden = !running;
+  btn.setAttribute('aria-pressed', String(settings.showPanels));
+  $('panelsText').textContent = settings.showPanels ? 'Hide panels' : 'Show panels';
+  btn.querySelector('i').className = `ti ti-layout-sidebar-left-${settings.showPanels ? 'collapse' : 'expand'}`;
 }
 
+// The choice sticks: whoever brings the panels back keeps them for the next session.
 function togglePanels() {
-  if (!(settings.focus && ((clock.active && !clock.paused) || procedure))) return;
-  showPanels = !showPanels;
+  if (!((clock.active && !clock.paused) || procedure)) return;
+  settings.showPanels = !settings.showPanels;
   renderFocus();
+  persist();
 }
 
 // ==========================================
@@ -786,8 +786,6 @@ function initScenePanel() {
     floorLabel();
     persist();
   });
-  $('focusMode').checked = settings.focus;
-  $('focusMode').addEventListener('change', e => { settings.focus = e.target.checked; renderFocus(); persist(); });
   applyScene();
 }
 
@@ -982,13 +980,13 @@ function initTimingPanel() {
 
 function applySound() {
   const s = settings.sound;
-  audio.setMuted(muted || s.mode === 'mute');
-  if (s.mode !== 'mute') audio.setSoundMode(s.mode);
+  audio.setMuted(muted);
+  audio.setSoundMode(s.mode);
   audio.setVolume(s.volume);
   audio.setChimeRate(s.rate);
   audio.setAmbience(s.ambience);
-  $('muteText').textContent = muted || s.mode === 'mute' ? 'Sound off' : 'Sound on';
-  $('btnMute').querySelector('i').className = `ti ti-volume${muted || s.mode === 'mute' ? '-off' : ''}`;
+  $('muteText').textContent = muted ? 'Sound off' : 'Sound on';
+  $('btnMute').querySelector('i').className = `ti ti-volume${muted ? '-off' : ''}`;
   $('btnMute').setAttribute('aria-pressed', String(muted));
 }
 
@@ -1006,7 +1004,7 @@ function applyPalette() {
 
 function initFeedbackPanel() {
   const s = settings.sound;
-  seg('soundMode', s.mode, v => { s.mode = v; if (v !== 'mute') muted = false; applySound(); persist(); });
+  seg('soundMode', s.mode, v => { s.mode = v; muted = false; applySound(); persist(); });
   seg('chimeRate', s.rate, v => { s.rate = Number(v); applySound(); persist(); });
   $('volume').value = Math.round(s.volume * 100);
   $('volumeLabel').textContent = `${Math.round(s.volume * 100)}%`;
@@ -1059,15 +1057,17 @@ function setSource(next) {
 
 function renderSource() {
   const live = source === 'muse' && museConnected;
-  $('sourceText').textContent = source === 'sim' ? 'Simulated EEG' : live ? 'Live Muse EEG' : 'Muse not connected';
-  $('sourceBadge').classList.toggle('live', live);
+  $('sourceText').textContent = museConnecting ? 'Connecting…' : source === 'sim' ? 'Simulated EEG' : live ? 'Live Muse EEG' : 'Muse not connected';
+  const badge = $('sourceBadge');
+  badge.classList.toggle('live', live);
+  badge.disabled = museConnecting;
+  badge.title = museConnected ? 'Muse settings' : 'Connect a Muse';
+  $('sourceAction').hidden = museConnected || museConnecting;
   $('btnDisconnectMuse').hidden = !museConnected;
-  for (const id of ['btnConnectMuse', 'btnHeaderConnectMuse']) {
-    const btn = $(id);
-    btn.hidden = museConnected;
-    btn.disabled = museConnecting;
-    btn.querySelector('span').textContent = museConnecting ? 'Connecting…' : 'Connect Muse';
-  }
+  const btn = $('btnConnectMuse');
+  btn.hidden = museConnected;
+  btn.disabled = museConnecting;
+  btn.querySelector('span').textContent = museConnecting ? 'Connecting…' : 'Connect Muse';
   document.querySelectorAll('#sourceMode button').forEach(btn => { btn.disabled = museConnecting; });
   renderBreath();
 }
@@ -1075,7 +1075,7 @@ function renderSource() {
 function initSignalPanel() {
   seg('sourceMode', source, setSource);
   $('btnConnectMuse').addEventListener('click', connectMuse);
-  $('btnHeaderConnectMuse').addEventListener('click', connectMuse);
+  $('sourceBadge').addEventListener('click', () => museConnected ? document.querySelector('.tabs [data-tab="signal"]').click() : connectMuse());
   $('btnDisconnectMuse').addEventListener('click', () => { disconnectMuse(); toast('Muse disconnected.'); });
 
   $('simStates').innerHTML = Object.entries(SIM_STATES).map(([k, v]) => `<button data-s="${k}" class="${k === sim.state ? 'active' : ''}">${v.label}</button>`).join('');
@@ -1343,10 +1343,9 @@ function initModals() {
     });
   });
   $('btnJournal').addEventListener('click', openJournal);
-  $('btnHelp').addEventListener('click', () => showModal('helpModal'));
   const slug = text => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const renderDocs = (page, section) => {
-    $('docsContent').innerHTML = marked.parse(page === 'guide' ? quickStart : page === 'features' ? featureList : readme);
+    $('docsContent').innerHTML = marked.parse({ how: howItWorks, guide: quickStart, features: featureList }[page] ?? readme);
     $('docsContent').querySelectorAll('h2, h3').forEach(h => { h.id = `doc-${slug(h.textContent)}`; });
     $('docsContent').scrollTop = 0;
     if (section) $(`doc-${section}`)?.scrollIntoView({ block: 'start' });
@@ -1365,10 +1364,11 @@ function initModals() {
       }
     });
   };
-  $('btnDocs').addEventListener('click', () => {
-    renderDocs('readme');
+  const openDocs = () => {
     $('docsDialog').showModal();
-  });
+    renderDocs('how');
+  };
+  $('btnDocs').addEventListener('click', openDocs);
   document.addEventListener('click', e => {
     const link = e.target.closest('a[data-doc]');
     if (!link) return;
@@ -1491,9 +1491,10 @@ function init() {
   const renderFullscreen = () => {
     const active = document.fullscreenElement === $('stage');
     const btn = $('btnFullscreen');
-    $('fullscreenHint').hidden = false;
+    if (active && !settings.fullscreenUsed) { settings.fullscreenUsed = true; persist(); }
+    $('fullscreenHint').hidden = !active && settings.fullscreenUsed;
     $('fullscreenHint').textContent = active ? 'Exit fullscreen' : 'Try fullscreen';
-    btn.classList.toggle('fullscreen-invite', !active);
+    btn.classList.toggle('fullscreen-invite', !active && !settings.fullscreenUsed);
     btn.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen');
     btn.title = active ? 'Exit fullscreen (Esc or F)' : 'Fullscreen (F)';
     btn.querySelector('i').className = active ? 'ti ti-minimize' : 'ti ti-maximize';
@@ -1518,6 +1519,7 @@ function init() {
     else if (e.key === 'f') fullscreen();
     else if (e.key === 'm') { muted = !muted; applySound(); }
     else if (e.key === 'p') togglePanels();
+    else if (e.key === '?') $('btnDocs').click();
   });
 
   requestAnimationFrame(frame);

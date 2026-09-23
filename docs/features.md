@@ -4,7 +4,7 @@ Everything runs in the browser. There is no account, no server and no upload.
 
 ## Signal
 
-- **Muse 2 and Muse S over Web Bluetooth** in desktop Chrome or Edge. Connect from the top bar or **Signal → Muse headset**
+- **Muse 2 and Muse S over Web Bluetooth** in desktop Chrome or Edge. Connect from the source badge in the top bar or **Signal → Muse headset**
 - **Five EEG sites:** TP9, AF7, AF8, TP10 and the AUX input, at 256 Hz. You choose which sites feed training (AF7 + AF8 by default)
 - **Pulse from the forehead PPG** on Muse 2 and Muse S (64 Hz). Beats are detected in the browser and checked for plausibility. The original Muse connects EEG-only
 - **Per-sensor quality:** each sensor reads good, fair, artifact (blink, motion or muscle) or bad. Artifacts never count toward reward or baseline, and reward stays off for 1 s after one
@@ -55,7 +55,7 @@ Everything runs in the browser. There is no account, no server and no upload.
 - **Baseline:** 10, 20, 30 or 60 s (6 s in the demo). You can record a new one mid-session
 - **Timed blocks and breaks:** Quick (1 × 2:00), Standard (3 × 3:00, 20 s breaks) and Long (7 × 4:00, 30 s breaks), or custom lengths up to 20 blocks
 - **Usable time only:** the clock counts usable signal only. Pauses, lost contact and hidden tabs stop it, and breaks mute feedback
-- **Live stats:** time in zone, best streak, rewarded time, score, and milestone marks every 5, 10 or 20 s rewarded
+- **Live stats on the stage:** time in zone, best streak, rewarded time, score, and milestone marks every 5, 10 or 20 s rewarded
 
 ## Breathing
 
@@ -69,8 +69,8 @@ Everything runs in the browser. There is no account, no server and no upload.
 - **Flock:** boids that gather while you hold, then colour, glow, trail and speed up when rewarded. Classic or pixel style, 24–140 birds. You can steer them with the cursor
 - **Night-sky stage:** a WebGL aurora brightens and widens with reward and follows the flock. It pulses on milestones
 - **Video scene:** a YouTube link or a local video file dims, blurs and quietens off target and clears as you hold it. Local files never leave the device
-- **Sound:** chimes (1 or 2 a second), a drone that follows the reward index, or both. Optional rain bed and milestone accents
-- **Focus mode:** the side panels fold away during a session, with a compact score readout on the stage
+- **Sound:** chimes (1 or 2 a second), a drone that follows the reward index, or both. **M** or **Sound on** mutes. Optional rain bed and milestone accents
+- **Focus mode:** the side panels fold away during a session. Show them with **P** or **Show panels**, and they stay out for later sessions until you hide them again
 - **Fullscreen and palettes:** fullscreen stage, six palettes, reduced-motion support
 
 ## Instruments
@@ -95,5 +95,5 @@ Everything runs in the browser. There is no account, no server and no upload.
 ## Integrations
 
 - **WebMCP tools** for browser agents: `read_session_state`, `configure_protocol` and `configure_simulation`. Coherence is withheld during blinded sessions
-- **Keyboard:** Space starts or pauses, F toggles fullscreen, M mutes, P toggles the panels
+- **Keyboard:** Space starts or pauses, F toggles fullscreen, M mutes, P toggles the panels, ? opens the docs
 - **Dev hook:** in dev builds, `window.__resonance.advance(seconds)` steps the pipeline without animation frames

@@ -28,11 +28,9 @@
   </ol>
 
   <div class="top-actions">
-    <span class="badge" id="sourceBadge"><span class="dot"></span><span id="sourceText">Simulated EEG</span></span>
-    <button class="btn primary" id="btnHeaderConnectMuse"><i class="ti ti-bluetooth" aria-hidden="true"></i><span>Connect Muse</span></button>
+    <button class="badge" id="sourceBadge"><span class="dot"></span><span id="sourceText">Simulated EEG</span><span class="badge-action" id="sourceAction"><i class="ti ti-bluetooth" aria-hidden="true"></i>Connect</span></button>
     <button class="btn ghost" id="btnJournal"><i class="ti ti-notebook"></i><span>Journal</span></button>
     <button class="btn ghost" id="btnDocs"><i class="ti ti-book" aria-hidden="true"></i><span>Docs</span></button>
-    <button class="btn ghost icon" id="btnHelp" aria-label="How it works"><i class="ti ti-help"></i></button>
   </div>
 </header>
 
@@ -142,14 +140,12 @@
         </div>
         <p class="note">Dims off target. Files stay local. <a class="more" href="#" data-doc="features#feedback">Learn more</a></p>
       </div>
-      <label class="check field"><input type="checkbox" id="focusMode" checked>Hide side panels while training</label>
 
       <h2>Sound</h2>
       <div class="seg" id="soundMode">
         <button data-v="chime" class="active">Chime</button>
         <button data-v="drone">Drone</button>
         <button data-v="both">Both</button>
-        <button data-v="mute">Off</button>
       </div>
       <div class="field">
         <label><span>Volume</span><b id="volumeLabel">60%</b></label>
@@ -289,8 +285,10 @@
           <div class="hud" id="hud" aria-live="off">
             <span><b id="hudZone">0%</b>in zone</span>
             <span><b id="hudStreak">0.0s</b>best streak</span>
+            <span><b id="hudEarned">0:00</b>rewarded</span>
             <span><b id="hudScore">0</b>score</span>
           </div>
+          <div class="marks" id="milestoneMarks" title="Milestones"></div>
         </div>
         <div class="blocks" id="blockDots" aria-hidden="true"></div>
         <button class="btn ghost" id="btnFullscreen" aria-label="Enter fullscreen" title="Fullscreen (F)"><i class="ti ti-maximize" aria-hidden="true"></i><span id="fullscreenHint">Try fullscreen</span></button>
@@ -323,7 +321,6 @@
       <span class="spacer"></span>
       <button class="btn ghost" id="btnPanels" hidden aria-pressed="false" title="Show or hide the side panels (P)"><i class="ti ti-layout-sidebar-left-expand" aria-hidden="true"></i><span id="panelsText">Show panels</span></button>
       <button class="btn ghost" id="btnMute" aria-pressed="false"><i class="ti ti-volume"></i><span id="muteText">Sound on</span></button>
-      <span class="keys"><kbd>Space</kbd> start / pause &middot; <kbd>F</kbd> fullscreen &middot; <kbd>M</kbd> mute &middot; <kbd>P</kbd> panels</span>
     </div>
   </section>
 
@@ -336,19 +333,6 @@
         <tbody id="measureRows"></tbody>
       </table>
       <p class="note" id="baselineNote">Percent of a drifting reference until you record a baseline.</p>
-    </div>
-
-    <div class="card">
-      <div class="tiles">
-        <div class="tile"><b id="statZone">0%</b><span>in zone</span></div>
-        <div class="tile"><b id="statStreak">0.0s</b><span>best streak</span></div>
-        <div class="tile"><b id="statEarned">0:00</b><span>rewarded</span></div>
-        <div class="tile"><b id="statScore">0</b><span>score</span></div>
-      </div>
-      <div class="milestones">
-        <div class="marks" id="milestoneMarks"></div>
-        <span class="hint" id="milestoneText">next mark at 5 s</span>
-      </div>
     </div>
 
     <div class="card" id="heartCard" hidden>
@@ -478,30 +462,13 @@
     <button class="btn ghost icon" id="btnCloseDocs" aria-label="Close docs" autofocus><i class="ti ti-x" aria-hidden="true"></i></button>
   </div>
   <div class="seg" id="docsPages" aria-label="Documentation pages">
-    <button data-page="readme" class="active" aria-pressed="true">README</button>
+    <button data-page="how" class="active" aria-pressed="true">How it works</button>
+    <button data-page="readme" aria-pressed="false">README</button>
     <button data-page="guide" aria-pressed="false">Quick start</button>
     <button data-page="features" aria-pressed="false">Features</button>
   </div>
   <article class="docs-content" id="docsContent" tabindex="0" aria-label="Documentation content"></article>
 </dialog>
-
-<!-- Help -->
-<div class="modal" id="helpModal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
-  <div class="sheet">
-    <div class="sheet-head">
-      <h2 id="helpTitle">How Resonance works</h2>
-      <button class="btn ghost icon" data-close aria-label="Close"><i class="ti ti-x"></i></button>
-    </div>
-    <ol class="how">
-      <li><b>Signal.</b> Each sensor is filtered and turned into a power spectrum from a two-second window, refreshed ten times a second. Blinks, movement, muscle tension and poor contact are detected per sensor and never count toward reward.</li>
-      <li><b>Baseline.</b> A short recording sets your personal 100% for every measure. Targets are percentages of that baseline, so protocols carry between people and days.</li>
-      <li><b>Rules.</b> Train a measure up, keep another down, or both. Reward needs every enabled rule to pass, optionally sustained for a hold.</li>
-      <li><b>Reward.</b> The flock gathers as you hold, then colours and speeds up. Chimes or a drone follow the same signal. Milestones mark accumulated rewarded time.</li>
-      <li><b>Heart.</b> Muse 2 and Muse S also read your pulse. Breathe with the pacer at your resonance rate and heart rate rises and falls with each breath; coherence measures how smooth and steady that wave is.</li>
-      <li><b>Review.</b> Every session logs blocks, streaks, recoveries and a reward timeline. Add notes and watch the trend. Blinded sham sessions and before-and-after check-ins let you test whether the training does anything for you.</li>
-    </ol>
-  </div>
-</div>
 
 <!-- Check-in -->
 <div class="modal" id="checkinModal" role="dialog" aria-modal="true" aria-labelledby="checkinTitle">

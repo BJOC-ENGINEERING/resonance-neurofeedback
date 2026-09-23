@@ -22,7 +22,7 @@ Full feature list: [Features](docs/features.md).
 - Hold training (0 to 10 s) with a progress ring; the flock gathers while you hold
 - Night-sky stage: a WebGL aurora brightens and widens with reward, light follows the flock while you hold, and the birds glow and trail when rewarded
 - Video scene: play a YouTube link or a local video file that dims, blurs and quietens off target and clears as you hold it. Files never leave the device
-- Focus mode: the side panels fold away while a session runs, with a compact score readout on the stage. Press P to bring them back
+- Focus mode: the side panels fold away while a session runs. Press P to bring them back; the choice sticks
 - Manual thresholds or auto difficulty that steers toward a target reward rate
 - Timed blocks and breaks. The clock counts usable signal only
 - Per-sensor quality (blink, motion, muscle, contact). Artifacts never count toward reward or baseline
@@ -68,7 +68,7 @@ The static production output is written to `dist/`.
 
 1. Turn on Bluetooth and your Muse.
 2. Open the app in desktop Chrome or Edge over HTTPS or localhost.
-3. Click **Connect Muse** beside the source badge in the top bar, or open **Signal → Muse headset** in the setup panel and click **Connect Muse** there.
+3. Click **Connect** on the source badge in the top bar, or open **Signal → Muse headset** in the setup panel and click **Connect Muse** there.
 4. Choose the headset in the browser prompt.
 5. Watch **Traces** until every training sensor reads good.
 6. Pick a protocol and click **Start session**. A 20 second baseline runs first.

@@ -1,6 +1,5 @@
 // Canvas boids (Craig Reynolds) driven by the reward state.
-// Out of zone: a grey swarm, each bird on its own heading. Holding: it gathers and starts to line up.
-// Rewarded: one aligned flock, with colour, glow, trails and speed.
+// Out of zone: grey, loose, slow. Holding: the flock gathers. Rewarded: colour, glow, trails, speed.
 
 const REDUCED_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -16,7 +15,6 @@ export class FlockCanvas {
     this.dimmed = false;       // breaks, pauses, lost signal
     this.colorTransition = 0;  // 0 (grey) to 1 (full colour)
     this.gather = 0;
-    this.order = 0;            // 0 swarm (milling, no shared heading) to 1 flock (aligned)
     this.flourishT = 0;
     this.hue = options.hue ?? 165;
     this.light = !!options.light;
@@ -45,7 +43,6 @@ export class FlockCanvas {
         vy: (Math.random() - 0.5) * 2,
         trail: [],
         tint: (Math.random() - 0.5) * 70,
-        heading: Math.random() * Math.PI * 2, // private wander direction, followed while the group is a swarm
         size: 3 + Math.random() * 2.5
       });
     }
@@ -151,7 +148,6 @@ export class FlockCanvas {
     const ease = Math.min(dt * 3.5, 1);
     this.colorTransition += ((this.reward && !this.dimmed ? 1 : 0) - this.colorTransition) * ease;
     this.gather += ((this.dimmed ? 0 : this.reward ? 0.45 : this.hold * 0.9) - this.gather) * ease;
-    this.order += ((this.dimmed ? 0 : this.reward ? 1 : this.hold * 0.4) - this.order) * ease;
     this.flourishT = Math.max(0, this.flourishT - dt * 1.2);
 
     const calm = REDUCED_MOTION ? 0.55 : 1;
@@ -159,15 +155,6 @@ export class FlockCanvas {
     const visualRange = 52 + this.gather * 60;
     const minDistance = 26 - this.gather * 6;
     const cohesion = 0.0025 + this.gather * 0.012;
-    // Alignment is what separates a flock from a swarm: both hold together, only a flock shares a heading.
-    const alignment = 0.006 + this.order * 0.08;
-    // A shared heading across the whole stage, so a spread-out swarm lines up within a second or two.
-    // Not with a pacer: there the flock circles its breathing ring, and one heading would drag it off.
-    let meanVx = 0, meanVy = 0;
-    for (const b of this.boids) { meanVx += b.vx; meanVy += b.vy; }
-    meanVx /= this.boids.length || 1; meanVy /= this.boids.length || 1;
-    const consensus = this.breath === null ? this.order * this.order * 0.06 : 0;
-    const wander = (0.03 + 0.31 * (1 - this.order)) * (REDUCED_MOTION ? 0.5 : 1);
     const cx = this.width / 2, cy = this.height / 2;
     const trailLength = this.variant === 'retro' ? 6 : 12 + Math.round(this.drive * 10);
 
@@ -192,13 +179,11 @@ export class FlockCanvas {
       }
 
       if (closeCount > 0) {
-        b1.vx += (avgVx / closeCount - b1.vx) * alignment;
-        b1.vy += (avgVy / closeCount - b1.vy) * alignment;
+        b1.vx += (avgVx / closeCount - b1.vx) * 0.04;
+        b1.vy += (avgVy / closeCount - b1.vy) * 0.04;
         b1.vx += (centerX / closeCount - b1.x) * cohesion;
         b1.vy += (centerY / closeCount - b1.y) * cohesion;
       }
-      b1.vx += (meanVx - b1.vx) * consensus;
-      b1.vy += (meanVy - b1.vy) * consensus;
       b1.vx += sepX * 0.07;
       b1.vy += sepY * 0.07;
 
@@ -217,10 +202,10 @@ export class FlockCanvas {
         b1.vy += (ry / d) * k;
       }
 
-      // Each bird steers toward its own drifting heading: strong in a swarm, a faint ripple once the flock is aligned.
-      b1.heading += (Math.random() - 0.5) * 0.5;
-      b1.vx += Math.cos(b1.heading) * wander;
-      b1.vy += Math.sin(b1.heading) * wander;
+      // Wander keeps an unrewarded flock from settling into one stream.
+      const jitter = 0.12 * (1 - this.colorTransition);
+      b1.vx += (Math.random() - 0.5) * jitter;
+      b1.vy += (Math.random() - 0.5) * jitter;
 
       if (this.mouse.active) {
         const mdx = this.mouse.x - b1.x, mdy = this.mouse.y - b1.y;

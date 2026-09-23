@@ -66,7 +66,7 @@ Everything runs in the browser. There is no account, no server and no upload.
 
 ## Feedback
 
-- **Flock:** off target the birds mill about as a swarm, each on its own heading. They gather and start to line up while you hold, and when rewarded they fly as one aligned flock that colours, glows, trails and speeds up. With the pacer on they circle its breathing ring together. Classic or pixel style, 24–140 birds. You can steer them with the cursor
+- **Flock:** boids that gather while you hold, then colour, glow, trail and speed up when rewarded. Classic or pixel style, 24–140 birds. You can steer them with the cursor
 - **Night-sky stage:** a WebGL aurora brightens and widens with reward and follows the flock. It pulses on milestones
 - **Video scene:** a YouTube link or a local video file dims, blurs and quietens off target and clears as you hold it. Local files never leave the device
 - **Sound:** chimes (1 or 2 a second), a drone that follows the reward index, or both. **M** or **Sound on** mutes. Optional rain bed and milestone accents

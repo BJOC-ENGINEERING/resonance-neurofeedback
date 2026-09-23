@@ -1,6 +1,6 @@
 # Resonance
 
-Resonance is a browser neurofeedback studio. It reads a Muse 2 or Muse S over Web Bluetooth, or a realistic synthetic EEG, and turns rule-based reward into a swarm of birds that settles into an aligned flock, colouring and speeding up, with chimes or a drone on the same signal. It also reads your pulse from the headset for heart-rate-variability breathing, and can run blinded sham sessions so you can test whether training works for you.
+Resonance is a browser neurofeedback studio. It reads a Muse 2 or Muse S over Web Bluetooth, or a realistic synthetic EEG, and turns rule-based reward into a flock that gathers, colours and speeds up, with chimes or a drone on the same signal. It also reads your pulse from the headset for heart-rate-variability breathing, and can run blinded sham sessions so you can test whether training works for you.
 
 Live app: [resonance-neurofeedback.vercel.app](https://resonance-neurofeedback.vercel.app)
 

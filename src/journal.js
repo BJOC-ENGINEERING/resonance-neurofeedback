@@ -41,6 +41,11 @@ export class SessionJournal {
       totalBlocks: options.totalBlocks || 1,
       setup: options.setup || null,       // protocol + timer snapshot; never raw EEG
       sensors: options.sensors || [],
+      condition: options.condition || null,  // 'real' | 'sham' when blinded controls are on
+      blinded: !!options.blinded,
+      bands: options.bands || null,          // { iaf } when bands were anchored to the alpha peak
+      breath: options.breath || null,        // { rate, inhale } when the pacer ran
+      checkins: options.checkins || null,    // { pre, post, guess }
       notes: '',
       events: [],
       timeline: { stepSeconds: TIMELINE_STEP, index: [], reward: [] },
@@ -65,6 +70,8 @@ export class SessionJournal {
       startedAt: performance.now(),
       durationSeconds: 0,
       rewardSeconds: 0,
+      trueRewardSeconds: 0,  // rules actually met; differs from rewardSeconds only in sham sessions
+      heart: { hr: 0, hrN: 0, coherence: 0, cohN: 0 },
       currentStreak: 0,
       longestStreak: 0,
       recoveries: 0,
@@ -75,9 +82,14 @@ export class SessionJournal {
   }
 
   // index: continuous 0..1 reward index, stored downsampled for the session chart.
-  recordTick(dt, isReward, bandPowers = {}, index = null) {
+  // extra: { trueReward, hr, coherence } — what the rules said and the pulse, when available.
+  recordTick(dt, isReward, bandPowers = {}, index = null, extra = {}) {
     if (!this.currentBlock) return;
     this.currentBlock.durationSeconds += dt;
+    if (extra.trueReward ?? isReward) this.currentBlock.trueRewardSeconds += dt;
+    const h = this.currentBlock.heart;
+    if (Number.isFinite(extra.hr)) h.hr += (extra.hr - h.hr) / ++h.hrN;
+    if (Number.isFinite(extra.coherence)) h.coherence += (extra.coherence - h.coherence) / ++h.cohN;
     if (index !== null) this.sampleTimeline(dt, isReward, index);
     this.currentBlock.samplesCount++;
 
@@ -127,6 +139,13 @@ export class SessionJournal {
     return this.save();
   }
 
+  setCheckins(id, checkins) {
+    const s = this.sessions.find(x => x.id === id);
+    if (!s) return false;
+    s.checkins = { ...s.checkins, ...checkins };
+    return this.save();
+  }
+
   deleteSession(id) {
     this.sessions = this.sessions.filter(x => x.id !== id);
     return this.save();
@@ -137,12 +156,17 @@ export class SessionJournal {
     const session = this.currentSession;
     let totalDur = 0;
     let totalReward = 0;
+    let trueReward = 0;
     let maxStreak = 0;
+    const heart = { hr: 0, hrN: 0, coherence: 0, cohN: 0 };
 
     for (const b of session.blocks) {
       totalDur += b.durationSeconds;
       totalReward += b.rewardSeconds;
+      trueReward += b.trueRewardSeconds ?? b.rewardSeconds;
       if (b.longestStreak > maxStreak) maxStreak = b.longestStreak;
+      if (b.heart?.hrN) { heart.hr += b.heart.hr * b.heart.hrN; heart.hrN += b.heart.hrN; }
+      if (b.heart?.cohN) { heart.coherence += b.heart.coherence * b.heart.cohN; heart.cohN += b.heart.cohN; }
     }
 
     session.endedAt = new Date().toISOString();
@@ -151,7 +175,10 @@ export class SessionJournal {
       rewardSeconds: Math.round(totalReward),
       timeInZonePct: totalDur > 0 ? Math.round((totalReward / totalDur) * 100) : 0,
       bestStreakSeconds: Math.round(maxStreak * 10) / 10,
-      score: Math.round(finalScore)
+      score: Math.round(finalScore),
+      trueInZonePct: totalDur > 0 ? Math.round((trueReward / totalDur) * 100) : 0,
+      heartRate: heart.hrN ? Math.round(heart.hr / heart.hrN * 10) / 10 : null,
+      coherencePct: heart.cohN ? Math.round(heart.coherence / heart.cohN * 100) : null
     };
 
     this.sessions.unshift(session);
@@ -179,7 +206,10 @@ export class SessionJournal {
 
   exportCSV() {
     if (!this.sessions.length) return '';
-    const headers = ['ID', 'Date', 'Source', 'Protocol', 'Target', 'Duration (s)', 'Reward (s)', 'In-Zone %', 'Best Streak (s)', 'Score', 'Notes'];
+    const headers = ['ID', 'Date', 'Source', 'Protocol', 'Target', 'Duration (s)', 'Reward (s)', 'In-Zone %', 'Best Streak (s)', 'Score',
+      'Condition', 'True In-Zone %', 'Guess', 'Pre RT (ms)', 'Post RT (ms)', 'Pre lapses', 'Post lapses', 'Pre calm', 'Post calm', 'Pre alert', 'Post alert',
+      'Mean HR', 'Coherence %', 'Pacer (/min)', 'Alpha peak (Hz)', 'Notes'];
+    const c = (s) => s.checkins || {};
     const rows = this.sessions.map(s => [
       s.id,
       s.startedAt,
@@ -191,6 +221,21 @@ export class SessionJournal {
       s.stats.timeInZonePct,
       s.stats.bestStreakSeconds,
       s.stats.score,
+      s.condition || '',
+      s.stats.trueInZonePct ?? '',
+      c(s).guess || '',
+      c(s).pre?.pvt?.medianMs ?? '',
+      c(s).post?.pvt?.medianMs ?? '',
+      c(s).pre?.pvt?.lapses ?? '',
+      c(s).post?.pvt?.lapses ?? '',
+      c(s).pre?.calm ?? '',
+      c(s).post?.calm ?? '',
+      c(s).pre?.alert ?? '',
+      c(s).post?.alert ?? '',
+      s.stats.heartRate ?? '',
+      s.stats.coherencePct ?? '',
+      s.breath?.rate ?? '',
+      s.bands?.iaf ?? '',
       s.notes || ''
     ]);
     const cell = (v) => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v;

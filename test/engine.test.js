@@ -164,3 +164,71 @@ test('clean simulated signal reads good; blinks and loose contact are flagged', 
   }
   assert.ok(flagged, 'a blink was detected within 20 s');
 });
+
+test('absolute measures compare the raw value and need no baseline', async () => {
+  const { ProtocolEngine } = await import('../src/protocol.js');
+  const engine = new ProtocolEngine({ rules: [{ measure: 'coherence', mode: 'up', threshold: 60 }] });
+  const f = (c) => features(10, { coherence: c });
+  let r = settle(engine, f(0.7));
+  assert.equal(r.reward, true);
+  assert.ok(Math.abs(r.rows[0].pct - 70) < 0.5);
+  r = settle(engine, f(0.4));
+  assert.equal(r.reward, false);
+  // A lost pulse drops the stale value instead of holding the last reading.
+  r = settle(engine, f(null), 0.2);
+  assert.equal(r.rows[0].pct, null);
+  engine.beginCalibration();
+  for (let i = 0; i < 50; i++) engine.evaluate(f(0.5), DT, { valid: false });
+  assert.equal(engine.finishCalibration(), true, 'no relative rule, nothing to calibrate');
+});
+
+test('personal bands move with the alpha peak and the IAF estimate finds it', async () => {
+  const { personalBands, estimateAlphaPeak, BANDS } = await import('../src/dsp.js');
+  assert.deepEqual(personalBands(10), BANDS);
+  const b = personalBands(11.2);
+  const band = (k) => b.find(x => x.k === k);
+  assert.ok(Math.abs(band('alpha').lo - 9.2) < 1e-9 && Math.abs(band('alpha').hi - 14.2) < 1e-9);
+  assert.equal(band('beta').hi, 30);
+  assert.equal(band('gamma').lo, 30);
+  assert.equal(personalBands(null), BANDS);
+
+  const sim = new SimulatedEEG({ seed: 3 });
+  sim.configure({ state: 'calm', intensity: 1 });
+  const ch = new Channel('TP9');
+  const sum = new Float64Array(WINDOW / 2 + 1);
+  let n = 0;
+  sim.generate(3);
+  for (let i = 0; i < 60; i++) {
+    ch.push(sim.generate(1).TP9, i);
+    if (ch.count >= WINDOW) { const s = psd(ch.latest(WINDOW)); for (let k = 0; k < s.length; k++) sum[k] += s[k]; n++; }
+  }
+  const est = estimateAlphaPeak(sum.map(v => v / n));
+  assert.ok(est.iaf > 9.6 && est.iaf < 11, `iaf ${est.iaf}`);
+  assert.ok(est.strength > 3, `strength ${est.strength}`);
+});
+
+test('features use the bands they are given', () => {
+  const spectrum = new Float64Array(WINDOW / 2 + 1).fill(1);
+  const spectra = new Map([['AF7', spectrum]]);
+  const std = computeFeatures(spectra, ['AF7']);
+  const shifted = computeFeatures(spectra, ['AF7'], [
+    { k: 'delta', lo: 1, hi: 4 }, { k: 'theta', lo: 4, hi: 6 }, { k: 'alpha', lo: 6, hi: 11 },
+    { k: 'beta', lo: 11, hi: 30 }, { k: 'gamma', lo: 30, hi: 45 }
+  ]);
+  assert.ok(shifted.theta < std.theta);
+  assert.ok(Math.abs(shifted.alpha - std.alpha) < 1e-9, 'same width, same power on a flat spectrum');
+  assert.ok(shifted.alpha_hi > 0);
+});
+
+test('alpha peak estimate lands on a single synthetic peak and reports a flat spectrum as weak', async () => {
+  const { estimateAlphaPeak, DF } = await import('../src/dsp.js');
+  const make = (peakHz, height) => Float64Array.from({ length: WINDOW / 2 + 1 }, (_, k) => {
+    const hz = Math.max(k * DF, 0.5);
+    return 40 / hz + height * Math.exp(-(((hz - peakHz) / 0.8) ** 2));
+  });
+  for (const hz of [8.6, 10, 11.4]) {
+    const est = estimateAlphaPeak(make(hz, 20));
+    assert.ok(Math.abs(est.iaf - hz) < 0.35, `${hz} → ${est.iaf}`);
+  }
+  assert.ok(estimateAlphaPeak(make(10, 0)).strength < 1.5);
+});

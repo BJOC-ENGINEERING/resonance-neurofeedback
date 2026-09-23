@@ -2,16 +2,20 @@ import { MuseClient } from 'muse-js';
 import { marked } from 'marked';
 import readme from './README.md?raw';
 import quickStart from './docs/quick-start.md?raw';
-import { FS, CHANNELS, CHANNEL_INFO, WINDOW, BANDS, psd, peakFrequency, Channel, assessQuality, DEFAULT_QUALITY_LIMITS } from './src/dsp.js';
-import { ProtocolEngine, computeFeatures, normalizeProtocol, describeProtocol, MEASURES, MEASURE_BY_KEY, PRESETS, DEFAULT_PROTOCOL } from './src/protocol.js';
+import { FS, CHANNELS, CHANNEL_INFO, WINDOW, BANDS, psd, peakFrequency, Channel, assessQuality, DEFAULT_QUALITY_LIMITS, personalBands, estimateAlphaPeak } from './src/dsp.js';
+import { ProtocolEngine, computeFeatures, compositeSpectrum, normalizeProtocol, describeProtocol, needsEeg, needsHeart, MEASURES, MEASURE_BY_KEY, PRESETS, DEFAULT_PROTOCOL } from './src/protocol.js';
 import { SessionClock, normalizeTimer, describeTimer, formatClock, TIMER_PRESETS, DEFAULT_TIMER } from './src/session.js';
-import { SimulatedEEG, SIM_STATES } from './src/sim.js';
+import { SimulatedEEG, SimulatedHeart, SIM_STATES } from './src/sim.js';
+import { HeartMonitor } from './src/heart.js';
+import { Pacer, ResonanceAssessment, RESONANCE_RATES, normalizeBreath } from './src/breath.js';
+import { normalizeStudy, nextCondition, shamProfile, ShamFeedback, compareConditions } from './src/study.js';
+import { runCheckin } from './src/checkin.js';
 import { FlockCanvas } from './src/flock.js';
 import { StageBackdrop } from './src/backdrop.js';
 import { VideoScene } from './src/scene-video.js';
 import { AudioEngine } from './src/audio.js';
 import { SessionJournal } from './src/journal.js';
-import { SpectrumChart, Spectrogram, TraceChart, StripChart, TrendChart, chartTheme, refreshChartTheme } from './src/charts.js';
+import { SpectrumChart, Spectrogram, TraceChart, StripChart, TrendChart, HeartChart, chartTheme, refreshChartTheme } from './src/charts.js';
 import { loadSettings, saveSettings, loadLibrary, saveLibrary, LIBRARY_LIMIT } from './src/store.js';
 import { registerResonanceMCP } from './src/mcp.js';
 
@@ -29,6 +33,8 @@ const toast = (msg, err = false) => {
 const ANALYSIS_DT = 0.1;       // s, rule evaluation and clock rate
 const DEMO_CALIBRATION = 6;    // s
 const ARTIFACT_HOLDOFF = 1000; // ms reward stays suppressed after a blink or movement
+const HEART_CHART_DELAY = 16;  // analysis steps (1.6 s) so each plotted heart rate sits between two detected beats
+const IAF_SITES = ['TP9', 'TP10', 'AF7', 'AF8'];
 
 // ==========================================
 // 1. STATE
@@ -46,6 +52,10 @@ const settings = {
   scope: { view: 'spectrum', scale: 'linear', ...saved.scope },
   scene: { mode: 'flock', floor: 0.25, youtube: '', ...saved.scene },
   focus: saved.focus ?? true,
+  breath: normalizeBreath(saved.breath),
+  bands: { personal: false, iaf: null, strength: null, measuredAt: null, source: null, ...saved.bands },
+  assessSec: saved.assessSec === 120 ? 120 : 60,
+  study: normalizeStudy(saved.study),
   welcomed: !!saved.welcomed
 };
 const persist = () => saveSettings(settings);
@@ -64,9 +74,24 @@ const clock = new SessionClock(settings.timer);
 const sim = new SimulatedEEG({ seed: (Date.now() & 0xffff) + 1 });
 const audio = new AudioEngine();
 const journal = new SessionJournal();
+const heart = new HeartMonitor();
+const simHeart = new SimulatedHeart({ seed: (Date.now() & 0xffff) + 7 });
+const pacer = new Pacer(settings.breath);
 
-let flock, backdrop, videoScene, spectrumChart, spectrogram, traceChart, stripChart, summaryChart, trendChart;
-let result = null;        // latest engine evaluation
+let flock, backdrop, videoScene, spectrumChart, spectrogram, traceChart, stripChart, summaryChart, trendChart, heartChart;
+let result = null;        // latest evaluation as shown: the engine's, or the sham's in a sham session
+let truth = null;         // the engine's own evaluation, always
+let pulse = heart.summary(0, { streaming: false });
+let lastPpgAt = -Infinity;
+let museHasPpg = false;
+let pacerLevel = null;    // lung level 0..1 while a pacer runs
+const pacerTrail = [];    // pacer levels waiting to line up with the delayed heart-rate trace
+let procedure = null;     // { kind: 'iaf' | 'resonance', ... } a guided measurement outside sessions
+let condition = null;     // 'real' | 'sham' for blinded sessions, else null
+let sham = null;
+let shownReward = false;
+let preCheckin = null;
+let starting = false;     // a check-in is open before the session
 let features = null;
 let signal = 'none';      // 'ok' | 'artifact' | 'bad' | 'none'
 let artifactUntil = 0;
@@ -74,7 +99,11 @@ let muted = false;
 let openSessionId = null;
 let pendingStart = false; // start requested before the first analysis window filled
 let showPanels = false;   // user reopened the rails during a focused session
-const stats = { usable: 0, rewardSec: 0, streak: 0, bestStreak: 0, score: 0, milestones: 0 };
+const stats = { usable: 0, rewardSec: 0, trueRewardSec: 0, streak: 0, bestStreak: 0, score: 0, milestones: 0 };
+
+const activeBands = () => settings.bands.personal && Number.isFinite(settings.bands.iaf) ? personalBands(settings.bands.iaf) : BANDS;
+const pacerOn = () => (settings.breath.pacer && procedure?.kind !== 'iaf') || procedure?.kind === 'resonance';
+const heartStreaming = () => source === 'sim' || (museConnected && performance.now() - lastPpgAt < 2000);
 
 // ==========================================
 // 2. SIGNAL → FEATURES → REWARD
@@ -93,7 +122,11 @@ function step(now) {
 
   if (source === 'sim') {
     for (const [name, samples] of Object.entries(sim.generate(dt))) channels.get(name).push(samples, now);
+    simHeart.setBreathing(pacerOn() ? pacer.rate : null);
+    simHeart.compliance = sim.stability;
+    heart.push(simHeart.generate(dt));
   }
+  stepPacer(dt);
 
   analysisAcc += dt;
   while (analysisAcc >= ANALYSIS_DT) {
@@ -127,31 +160,56 @@ function analyse(now) {
   const contact = signal === 'ok' || signal === 'artifact';
   const clean = signal === 'ok' && now >= artifactUntil;
 
-  features = computeFeatures(spectra, settings.sensors);
-  const feedbackOpen = clock.phase !== 'break' && !clock.paused && clock.phase !== 'finished';
-  result = engine.evaluate(features, ANALYSIS_DT, { valid: clean && feedbackOpen });
+  pulse = heart.summary(heart.time, { streaming: heartStreaming() });
+  const eeg = computeFeatures(spectra, settings.sensors, activeBands());
+  const coherence = pulse.state === 'ok' ? pulse.coherence : null;
+  features = eeg ? { ...eeg, coherence } : { coherence };
+
+  // Each source gates only the protocols that read it.
+  const p = settings.protocol;
+  const wantEeg = needsEeg(p) || !p.rules.length, wantHeart = needsHeart(p);
+  const heartOk = pulse.state === 'ok';
+  const sourcesContact = (!wantEeg || contact) && (!wantHeart || heartOk);
+  const sourcesClean = (!wantEeg || clean) && (!wantHeart || (heartOk && coherence !== null));
+
+  const feedbackOpen = clock.phase !== 'break' && !clock.paused && clock.phase !== 'finished' && !procedure;
+  const valid = sourcesClean && feedbackOpen;
+  truth = engine.evaluate(features, ANALYSIS_DT, { valid });
+  result = truth;
+  if (condition === 'sham' && clock.phase === 'training' && sham) {
+    // Sham: same gating, but reward comes from the replayed pattern, not the rules.
+    const s = valid ? sham.step(ANALYSIS_DT) : { reward: false, allPass: false, index: 0, holdProgress: 0 };
+    result = { ...truth, reward: s.reward, allPass: s.allPass, index: s.index, holdProgress: s.holdProgress };
+  }
+  result.edge = result.reward === shownReward ? null : result.reward ? 'on' : 'off';
+  shownReward = result.reward;
 
   const wasTraining = clock.training;
-  for (const event of clock.tick(ANALYSIS_DT, { valid: contact })) handleClockEvent(event);
+  for (const event of clock.tick(ANALYSIS_DT, { valid: sourcesContact })) handleClockEvent(event);
 
-  const rewarded = result.reward && (clock.training || clock.phase === 'idle');
-  if (wasTraining && clock.training && contact) accumulate(rewarded);
+  const rewarded = result.reward && (clock.training || (clock.phase === 'idle' && !procedure));
+  if (wasTraining && clock.training && sourcesContact) accumulate(rewarded, truth.reward);
+  if (procedure) stepProcedure(now);
+  updateHeart();
 
-  const hold = clock.phase === 'calibrating' ? 0 : result.holdProgress;
-  const dimmed = clock.phase === 'break' || clock.paused || clock.phase === 'calibrating' || !contact;
+  const hold = clock.phase === 'calibrating' || procedure ? 0 : result.holdProgress;
+  // During the resonance assessment the flock stays lit and breathes with the pacer.
+  const dimmed = procedure ? procedure.kind === 'iaf'
+    : clock.phase === 'break' || clock.paused || clock.phase === 'calibrating' || !sourcesContact;
   flock.setReward(rewarded, 0.25 + result.index * 0.75, hold);
   flock.setDimmed(dimmed);
   backdrop.set({ energy: rewarded ? 0.55 + result.index * 0.45 : hold * 0.25, hold, dimmed });
-  updateVideoScene(rewarded, hold, contact);
+  updateVideoScene(rewarded, hold, sourcesContact);
   audio.update(result.index, clock.training, rewarded && clock.training);
   stripChart.push(result.index, rewarded);
   spectrogram.push(features?.spectrum, ANALYSIS_DT);
-  renderLive(rewarded);
+  renderLive(rewarded, { wantEeg, wantHeart, sourcesContact });
 }
 
-function accumulate(rewarded) {
+function accumulate(rewarded, trueRewarded) {
   const dt = ANALYSIS_DT;
   stats.usable += dt;
+  if (trueRewarded) stats.trueRewardSec += dt;
   if (rewarded) {
     stats.rewardSec += dt;
     stats.streak += dt;
@@ -167,7 +225,188 @@ function accumulate(rewarded) {
     }
   } else stats.streak = 0;
   if (result.edge) journal.addEvent(result.edge === 'on' ? 'reward-on' : 'reward-off');
-  journal.recordTick(dt, rewarded, features ? Object.fromEntries(BANDS.map(b => [b.k, features[b.k]])) : {}, result.index);
+  journal.recordTick(dt, rewarded, features?.spectrum ? Object.fromEntries(BANDS.map(b => [b.k, features[b.k]])) : {}, result.index, {
+    trueReward: trueRewarded,
+    hr: pulse.state === 'ok' ? pulse.hr : null,
+    coherence: pulse.state === 'ok' ? pulse.coherence : null
+  });
+}
+
+// ==========================================
+// 2b. PULSE, PACER, GUIDED MEASUREMENTS
+// ==========================================
+
+function stepPacer(dt) {
+  const on = pacerOn();
+  const el = $('pacer');
+  if (!on) {
+    if (pacerLevel !== null) {
+      pacerLevel = null;
+      el.hidden = true;
+      flock.setBreath(null);
+      audio.setBreath(null);
+    }
+    return;
+  }
+  const s = pacer.step(dt);
+  pacerLevel = s.level;
+  el.hidden = false;
+  el.style.setProperty('--level', s.level.toFixed(3));
+  el.classList.toggle('in', s.inhaling);
+  if (s.edge) $('pacerText').textContent = s.inhaling ? 'in' : 'out';
+  flock.setBreath(s.level);
+}
+
+function updateHeart() {
+  const streaming = heartStreaming();
+  $('heartCard').hidden = !streaming && pulse.state === 'off';
+  pacerTrail.push(pacerLevel);
+  const breath = pacerTrail.length > HEART_CHART_DELAY ? pacerTrail.shift() : null;
+  heartChart.push(pulse.state === 'ok' ? heart.hrAt(heart.time - HEART_CHART_DELAY * ANALYSIS_DT) : null, breath);
+  audio.setBreath(pacerLevel !== null && settings.breath.sound ? pacerLevel : null);
+}
+
+function renderHeart() {
+  if ($('heartCard').hidden) return;
+  const ok = pulse.state === 'ok';
+  const blind = document.body.classList.contains('blinded');
+  $('heartState').textContent = pulse.state === 'off' ? 'no pulse stream' : ok ? 'pulse' : 'finding pulse';
+  $('heartState').className = `state ${ok ? 'on' : 'warn'}`;
+  $('hrNow').textContent = ok && pulse.hr ? Math.round(pulse.hr) : '—';
+  $('hrvNow').textContent = ok && pulse.rmssd ? Math.round(pulse.rmssd) : '—';
+  $('cohNow').textContent = blind ? '··' : ok && pulse.coherence !== null ? `${Math.round(pulse.coherence * 100)}%` : '—';
+  $('rhythmNow').textContent = ok && pulse.peakHz ? (pulse.peakHz * 60).toFixed(1) : '—';
+  heartChart.redraw();
+}
+
+function startIafMeasure() {
+  if (clock.active || procedure || starting) return toast('Finish the session first.', true);
+  if (signal === 'none') return toast(source === 'muse' ? 'Connect the headset and wait for signal.' : 'Starting signal…', true);
+  audio.init(); audio.resume(); applySound();
+  procedure = { kind: 'iaf', duration: source === 'sim' ? 20 : 60, elapsed: 0, sum: null, n: 0 };
+  audio.playCue('start');
+  renderControls();
+}
+
+function startAssessment() {
+  if (clock.active || procedure || starting) return toast('Finish the session first.', true);
+  if (!heartStreaming()) return toast(source === 'muse' ? 'No pulse stream. Muse 2 and Muse S send one; the original Muse does not.' : 'Starting signal…', true);
+  audio.init(); audio.resume(); applySound();
+  const assess = new ResonanceAssessment({ rates: RESONANCE_RATES, stepSec: settings.assessSec, settleSec: settings.assessSec >= 120 ? 20 : 15 });
+  procedure = { kind: 'resonance', assess };
+  pacer.set({ rate: assess.rate, inhale: settings.breath.inhale });
+  pacer.reset();
+  $('pacerText').textContent = 'in';
+  renderControls();
+}
+
+function stopProcedure(message) {
+  if (!procedure) return;
+  procedure = null;
+  pacer.set(settings.breath);
+  renderControls();
+  renderBreath();
+  if (message) toast(message);
+}
+
+function stepProcedure() {
+  if (procedure.kind === 'iaf') {
+    // Average clean resting spectra from every good site: alpha is clearest behind the ears.
+    const good = IAF_SITES.map(n => channels.get(n)).filter(ch => ch.spectrum && (ch.quality.state === 'good' || ch.quality.state === 'fair'));
+    if (!good.length || nowMs < artifactUntil) return;
+    const spectrum = compositeSpectrum(good.map(ch => ch.spectrum));
+    procedure.sum ??= new Float64Array(spectrum.length);
+    for (let k = 0; k < spectrum.length; k++) procedure.sum[k] += spectrum[k];
+    procedure.n++;
+    procedure.elapsed += ANALYSIS_DT;
+    if (procedure.elapsed < procedure.duration) return;
+    const est = estimateAlphaPeak(procedure.sum.map(v => v / procedure.n));
+    audio.playCue('end');
+    if (!est || est.iaf === null || est.strength < 1.5) {
+      return stopProcedure(`No clear alpha peak${est ? ` (${est.strength} dB above background)` : ''}. Try again with eyes closed, relaxed and still.`);
+    }
+    settings.bands = { personal: true, iaf: est.iaf, strength: est.strength, measuredAt: new Date().toISOString(), source };
+    persist();
+    applyBands();
+    stopProcedure(`Alpha peak ${est.iaf.toFixed(1)} Hz. Bands now follow it.`);
+  } else if (procedure.kind === 'resonance') {
+    for (const e of procedure.assess.tick(ANALYSIS_DT, heart.time, heart.beats)) {
+      if (e.type === 'rate') { pacer.set({ rate: e.rate }); audio.playChime(440, 0.08); }
+      else if (e.type === 'done') {
+        const measured = e.results.filter(r => r.valid).length;
+        if (e.rate === null) return stopProcedure('Not enough clean pulse to score any rate. Sit still and try again.');
+        settings.breath.resonance = { rate: e.rate, results: e.results, measuredAt: new Date().toISOString(), source };
+        settings.breath.rate = e.rate;
+        persist();
+        audio.playCue('end');
+        stopProcedure(`Resonance rate ${e.rate} breaths / min${measured < e.results.length ? ` (${measured} of ${e.results.length} rates had clean pulse)` : ''}. The pacer now uses it.`);
+      }
+    }
+  }
+}
+
+function applyBands() {
+  const bands = activeBands();
+  spectrumChart.setBands(bands);
+  const personal = bands !== BANDS;
+  $('bandLegend').innerHTML = bands.map(b => `<span><i style="background:var(${b.color})"></i>${b.k[0].toUpperCase() + b.k.slice(1)} <em>${+b.lo.toFixed(1)}–${+b.hi.toFixed(1)}</em></span>`).join('');
+  $('bandLegend').classList.toggle('personal', personal);
+  const iaf = settings.bands;
+  $('iafResult').innerHTML = Number.isFinite(iaf.iaf)
+    ? `<b>${iaf.iaf.toFixed(1)} Hz</b><span>${iaf.strength} dB above background · ${new Date(iaf.measuredAt).toLocaleDateString([], { dateStyle: 'medium' })}${iaf.source === 'sim' ? ' · simulated' : ''}</span>`
+    : '<b>Not measured</b><span>Standard bands: theta 4–8, alpha 8–13, beta 13–30 Hz</span>';
+  $('useIaf').checked = personal;
+  $('useIaf').disabled = !Number.isFinite(iaf.iaf) || clock.active;
+  if (!clock.active) engine.resetBaseline();
+}
+
+function renderBreath() {
+  const b = settings.breath;
+  $('pacerOn').checked = b.pacer;
+  $('pacerRate').value = b.rate;
+  $('pacerRateLabel').textContent = `${b.rate.toFixed(1)} / min`;
+  $('pacerSound').checked = b.sound;
+  document.querySelectorAll('#pacerInhale button').forEach(x => x.classList.toggle('active', Number(x.dataset.v) === b.inhale));
+  document.querySelectorAll('#assessLength button').forEach(x => x.classList.toggle('active', Number(x.dataset.v) === settings.assessSec));
+  if (!procedure) pacer.set(b);
+  const r = b.resonance;
+  if (!r) {
+    $('resonanceResult').innerHTML = '<p class="empty">Not measured yet. Six minutes of paced breathing finds it.</p>';
+  } else {
+    const top = Math.max(...r.results.map(x => x.swing ?? 0), 1);
+    $('resonanceResult').innerHTML = `<div class="res-head"><b>${r.rate} / min</b><span>${new Date(r.measuredAt).toLocaleDateString([], { dateStyle: 'medium' })}${r.source === 'sim' ? ' · simulated' : ''}</span>${b.rate !== r.rate ? `<button class="btn ghost" id="btnUseResonance">Use ${r.rate}</button>` : ''}</div>`
+      + r.results.map(x => `<div class="res-row ${x.rate === r.rate ? 'best' : ''}"><span>${x.rate}</span><i style="--w:${x.valid ? (x.swing / top) * 100 : 0}%"></i><em>${x.valid ? `${x.swing.toFixed(1)} bpm` : 'no pulse'}</em></div>`).join('')
+      + '<p class="hint">heart-rate swing per breath, peak to trough</p>';
+  }
+  $('pulseNote').textContent = source === 'sim'
+    ? 'In the simulator a virtual heart follows the pacer. It has its own resonance rate, between 5 and 6.5 breaths a minute, for the assessment to find.'
+    : museConnected ? (museHasPpg ? 'Pulse streaming from the headset’s forehead sensor.' : 'This headset sends no pulse. Muse 2 and Muse S do.')
+    : 'Muse 2 and Muse S read your pulse optically from the forehead.';
+}
+
+function initBreathPanel() {
+  const b = settings.breath;
+  $('pacerOn').addEventListener('change', e => { b.pacer = e.target.checked; if (b.pacer) { pacer.reset(); $('pacerText').textContent = 'in'; audio.init(); audio.resume(); applySound(); } persist(); renderBreath(); });
+  $('pacerRate').addEventListener('input', e => { b.rate = Number(e.target.value); persist(); renderBreath(); });
+  $('pacerSound').addEventListener('change', e => { b.sound = e.target.checked; persist(); });
+  seg('pacerInhale', b.inhale, v => { b.inhale = Number(v); persist(); renderBreath(); });
+  seg('assessLength', settings.assessSec, v => { settings.assessSec = Number(v); persist(); });
+  $('btnAssess').addEventListener('click', startAssessment);
+  $('resonanceResult').addEventListener('click', e => {
+    if (!e.target.closest('#btnUseResonance')) return;
+    b.rate = b.resonance.rate;
+    persist();
+    renderBreath();
+  });
+  $('useIaf').addEventListener('change', e => {
+    if (clock.active) return;
+    settings.bands.personal = e.target.checked;
+    persist();
+    applyBands();
+  });
+  $('btnMeasureIaf').addEventListener('click', startIafMeasure);
+  $('btnCancelProc').addEventListener('click', () => stopProcedure('Stopped. Nothing was saved.'));
+  renderBreath();
 }
 
 // ==========================================
@@ -197,6 +436,26 @@ function handleClockEvent(event) {
   }
 }
 
+// Optional check-in first, then the session proper.
+async function requestStart() {
+  if (starting || procedure) return;
+  if (!settings.protocol.rules.length) return toast('Enable at least one rule first.', true);
+  if (needsHeart(settings.protocol) && source === 'muse' && museConnected && !museHasPpg) {
+    return toast('This protocol needs a pulse. Muse 2 and Muse S send one; this headset does not.', true);
+  }
+  preCheckin = null;
+  if (settings.study.checkin) {
+    starting = true;
+    renderControls();
+    const answers = await runCheckin({ title: 'Before you start', sub: 'Two quick ratings and a 60 second reaction test.', ratings: true, pvt: true });
+    starting = false;
+    renderControls();
+    if (!answers) return;
+    preCheckin = { calm: answers.calm, alert: answers.alert, pvt: answers.pvt };
+  }
+  startSession();
+}
+
 function startSession() {
   if (!settings.protocol.rules.length) return toast('Enable at least one rule first.', true);
   if (signal === 'none') {
@@ -206,7 +465,15 @@ function startSession() {
   audio.init();
   audio.resume();
   applySound();
-  Object.assign(stats, { usable: 0, rewardSec: 0, streak: 0, bestStreak: 0, score: 0, milestones: 0 });
+  Object.assign(stats, { usable: 0, rewardSec: 0, trueRewardSec: 0, streak: 0, bestStreak: 0, score: 0, milestones: 0 });
+  const blinded = settings.study.sham !== 'off';
+  const assigned = nextCondition(settings.study);
+  settings.study.queue = assigned.queue;
+  persist();
+  condition = blinded ? assigned.condition : null;
+  sham = condition === 'sham'
+    ? new ShamFeedback({ ...shamProfile(journal.getHistory(), settings.protocol), holdSec: settings.protocol.holdSec })
+    : null;
   clock.configure({ ...settings.timer, calibrationSec: source === 'sim' ? DEMO_CALIBRATION : settings.timer.calibrationSec });
   clock.start();
   engine.beginCalibration();
@@ -218,13 +485,18 @@ function startSession() {
     blockDurationSeconds: settings.timer.blockSec,
     totalBlocks: settings.timer.blocks,
     sensors: [...settings.sensors],
-    setup: { protocol: settings.protocol, timer: settings.timer }
+    setup: { protocol: settings.protocol, timer: settings.timer },
+    condition,
+    blinded,
+    bands: activeBands() !== BANDS ? { iaf: settings.bands.iaf } : null,
+    breath: settings.breath.pacer ? { rate: settings.breath.rate, inhale: settings.breath.inhale } : null,
+    checkins: preCheckin ? { pre: preCheckin } : null
   });
   renderControls();
 }
 
 function togglePause() {
-  if (!clock.active) return startSession();
+  if (!clock.active) return requestStart();
   if (clock.paused) { clock.resume(); audio.resume(); }
   else { clock.pause(); journal.addEvent('pause'); }
   renderControls();
@@ -234,14 +506,31 @@ function finishEarly() {
   for (const event of clock.finish()) handleClockEvent(event);
 }
 
-function completeSession() {
+async function completeSession() {
   const session = journal.finishSession(stats.score);
   clock.reset(); // back to live preview against the recorded baseline
+  condition = null;
+  sham = null;
   renderControls();
   if (!session) return;
   if (session.stats.totalDurationSeconds < 1) {
     journal.deleteSession(session.id);
     return toast('Session ended before training began. Nothing saved.');
+  }
+  const checkin = !!session.checkins?.pre;
+  if (checkin || session.blinded) {
+    // Ratings and the guess come before the reveal, so knowing the answer can't colour them.
+    const answers = await runCheckin({
+      title: 'Before you see the results',
+      sub: [checkin && 'The same two ratings and reaction test', session.blinded && 'your guess about the feedback'].filter(Boolean).join(', then ') + '.',
+      ratings: checkin, pvt: checkin, guess: session.blinded
+    });
+    if (answers) {
+      journal.setCheckins(session.id, {
+        ...(checkin ? { post: { calm: answers.calm, alert: answers.alert, pvt: answers.pvt } } : {}),
+        ...(session.blinded ? { guess: answers.guess } : {})
+      });
+    }
   }
   openSummary(session, true);
 }
@@ -258,36 +547,45 @@ function recalibrate() {
 // 4. LIVE RENDERING
 // ==========================================
 
-function renderLive(rewarded) {
+function renderLive(rewarded, { wantEeg = true, wantHeart = false, sourcesContact = true } = {}) {
   // Clock and cue
   const phase = clock.phase;
-  $('clockTime').textContent = formatClock(phase === 'idle' || phase === 'finished' ? clock.timer.blockSec : clock.remaining);
-  const contact = signal === 'ok' || signal === 'artifact';
-  const phaseText = clock.paused ? 'Paused'
+  const proc = procedure;
+  $('clockTime').textContent = formatClock(proc?.kind === 'iaf' ? proc.duration - proc.elapsed
+    : proc?.kind === 'resonance' ? proc.assess.remaining
+    : phase === 'idle' || phase === 'finished' ? clock.timer.blockSec : clock.remaining);
+  const phaseText = proc?.kind === 'iaf' ? 'Alpha peak · eyes closed'
+    : proc?.kind === 'resonance' ? `Rate ${proc.assess.index + 1} of ${proc.assess.rates.length} · ${proc.assess.rate} / min`
+    : clock.paused ? 'Paused'
     : phase === 'calibrating' ? 'Recording baseline'
-    : phase === 'training' ? (contact ? `Block ${clock.block} of ${clock.timer.blocks}` : 'Clock stopped · check sensors')
+    : phase === 'training' ? (sourcesContact ? `Block ${clock.block} of ${clock.timer.blocks}` : 'Clock stopped · check sensors')
     : phase === 'break' ? 'Break'
     : phase === 'finished' ? 'Finished' : 'Ready · live preview';
   $('clockPhase').textContent = phaseText;
 
   const cue = $('cue');
+  const heartMissing = wantHeart && pulse.state !== 'ok';
   let text;
-  if (!settings.protocol.rules.length) text = 'Enable a rule to begin.';
-  else if (signal === 'none') text = source === 'muse' ? 'Waiting for the headset.' : 'Starting signal…';
-  else if (signal === 'bad') text = 'A training sensor lost contact. Adjust the band.';
+  if (proc?.kind === 'iaf') text = signal === 'ok' && nowMs >= artifactUntil ? 'Close your eyes and let your face go slack. A chime marks the end.' : 'Hold still. Measuring resumes when the signal is clean.';
+  else if (proc?.kind === 'resonance') text = pulse.state !== 'ok' ? 'Finding your pulse. Sit still.' : 'Breathe with the ring: in through the nose, slow and easy out.';
+  else if (!settings.protocol.rules.length) text = 'Enable a rule to begin.';
+  else if (wantEeg && signal === 'none') text = source === 'muse' ? 'Waiting for the headset.' : 'Starting signal…';
+  else if (wantEeg && signal === 'bad') text = 'A training sensor lost contact. Adjust the band.';
+  else if (heartMissing) text = pulse.state === 'off' ? 'Waiting for a pulse stream.' : 'Finding your pulse. Sit still.';
   else if (clock.paused) text = 'Paused.';
-  else if (phase === 'calibrating') text = 'Rest your gaze on the flock. Measuring your baseline.';
+  else if (phase === 'calibrating') text = wantEeg ? 'Rest your gaze on the flock. Measuring your baseline.' : 'Settle in and follow the pacer.';
   else if (phase === 'break') text = 'Rest. Feedback resumes after the break.';
-  else if (nowMs < artifactUntil) text = 'Movement detected. Stay still.';
+  else if (wantEeg && nowMs < artifactUntil) text = 'Movement detected. Stay still.';
   else if (rewarded) text = 'In the zone.';
   else if (result.allPass) text = 'Hold it…';
   else if (phase === 'idle') text = 'Live preview. Press start to record a baseline and train.';
+  else if (wantHeart && !wantEeg) text = pulse.coherence === null ? 'Keep breathing with the ring. Coherence needs 30 s of pulse.' : 'Breathe with the ring. Let each out-breath be long and easy.';
   else text = 'Ease toward the target. The flock will gather.';
   cue.textContent = text;
   cue.classList.toggle('hot', rewarded);
   $('stage').classList.toggle('rewarded', rewarded);
 
-  const holding = settings.protocol.holdSec > 0 && result.holdProgress > 0 && !rewarded && phase !== 'calibrating';
+  const holding = settings.protocol.holdSec > 0 && result.holdProgress > 0 && !rewarded && phase !== 'calibrating' && !proc;
   $('holdRing').classList.toggle('show', holding);
   $('holdArc').style.strokeDashoffset = String(176 * (1 - result.holdProgress));
 
@@ -300,26 +598,30 @@ function renderLive(rewarded) {
 
   // Signal → reward table
   const state = $('rewardState');
-  state.textContent = signal === 'none' ? 'no signal' : signal === 'bad' ? 'poor contact'
-    : nowMs < artifactUntil ? 'artifact' : rewarded ? 'reward on' : result.allPass ? 'holding' : `${result.passing} / ${result.rows.length} passing`;
-  state.className = `state ${rewarded ? 'on' : signal === 'bad' || nowMs < artifactUntil ? 'warn' : ''}`;
+  const eegWarn = wantEeg && (signal === 'bad' || nowMs < artifactUntil);
+  state.textContent = wantEeg && signal === 'none' ? 'no signal' : wantEeg && signal === 'bad' ? 'poor contact'
+    : wantEeg && nowMs < artifactUntil ? 'artifact' : heartMissing ? 'no pulse'
+    : rewarded ? 'reward on' : result.allPass ? 'holding' : `${result.passing} / ${result.rows.length} passing`;
+  state.className = `state ${rewarded ? 'on' : eegWarn || heartMissing ? 'warn' : ''}`;
   const rows = $('measureRows');
   if (rows.children.length !== Math.max(1, result.rows.length) || rows.dataset.key !== ruleKey()) buildMeasureRows();
   result.rows.forEach((r, i) => {
     const tr = rows.children[i];
     const m = MEASURE_BY_KEY[r.measure];
     const digits = m.unit === 'Hz' || !m.unit ? 2 : 1;
-    tr.children[1].innerHTML = r.pct === null ? '—' : `${r.pct.toFixed(0)}%<span class="sub">${r.now.toFixed(digits)} ${m.unit}</span>`;
+    tr.children[1].innerHTML = r.pct === null ? '—' : `${r.pct.toFixed(0)}%<span class="sub">${m.absolute ? 'absolute' : `${r.now.toFixed(digits)} ${m.unit}`}</span>`;
     tr.children[2].textContent = `${r.mode === 'up' ? '≥' : '≤'} ${r.target.toFixed(r.target % 1 ? 1 : 0)}%`;
-    tr.children[3].textContent = r.pct === null ? (r.measure === 'asym' ? 'AF7+AF8' : '—') : r.pass ? '✓ pass' : '· wait';
+    tr.children[3].textContent = r.pct === null ? (r.measure === 'asym' ? 'AF7+AF8' : m.heart ? 'pulse' : '—') : r.pass ? '✓ pass' : '· wait';
     tr.children[3].className = r.pass ? 'pass' : 'fail';
     const bar = tr.querySelector('.bar');
-    const span = Math.max(200, r.target * 1.5);
+    const span = m.absolute ? 100 : Math.max(200, r.target * 1.5);
     bar.style.setProperty('--v', `${Math.min(100, ((r.pct ?? 0) / span) * 100)}%`);
     bar.style.setProperty('--t', `${Math.min(100, (r.target / span) * 100)}%`);
     bar.classList.toggle('pass', r.pass);
   });
-  $('baselineNote').textContent = engine.calibrated
+  $('baselineNote').textContent = !needsEeg(settings.protocol) && settings.protocol.rules.length
+    ? 'Heart coherence is absolute: the share of heart-rate variation in one slow, steady rhythm.'
+    : engine.calibrated
     ? `Percent of your recorded baseline${settings.protocol.difficulty.mode === 'auto' ? ' · targets adapt toward ' + Math.round(settings.protocol.difficulty.rate * 100) + '% reward' : ''}.`
     : 'Percent of a drifting reference until you record a baseline.';
 
@@ -350,7 +652,7 @@ function renderLive(rewarded) {
   const connected = source === 'sim' || museConnected;
   const stepState = {
     connect: connected,
-    signal: connected && signal === 'ok',
+    signal: connected && (!wantEeg || signal === 'ok') && (!wantHeart || pulse.state === 'ok'),
     baseline: engine.calibrated,
     train: phase === 'finished'
   };
@@ -362,7 +664,8 @@ function renderLive(rewarded) {
     if (!done) currentSet = true;
   });
 
-  if (features) $('peakText').textContent = `peak ${peakFrequency(features.spectrum, 4, 30).toFixed(1)} Hz`;
+  if (features?.spectrum) $('peakText').textContent = `peak ${peakFrequency(features.spectrum, 4, 30).toFixed(1)} Hz`;
+  renderHeart();
 }
 
 const ruleKey = () => settings.protocol.rules.map(r => r.measure + r.mode).join('|');
@@ -372,7 +675,7 @@ function buildMeasureRows() {
   rows.dataset.key = ruleKey();
   rows.innerHTML = settings.protocol.rules.length ? settings.protocol.rules.map(r => {
     const m = MEASURE_BY_KEY[r.measure];
-    return `<tr><td><div class="m"><i style="${m.color ? `background:var(${m.color})` : ''}"></i>${m.label} ${r.mode === 'up' ? '↑' : '↓'}</div><div class="bar"></div></td><td></td><td></td><td></td></tr>`;
+    return `<tr><td><div class="m"><i style="${m.color ? `background:var(${m.color})` : m.heart ? 'background:var(--bad)' : ''}"></i>${m.label} ${r.mode === 'up' ? '↑' : '↓'}</div><div class="bar"></div></td><td></td><td></td><td></td></tr>`;
   }).join('') : '<tr class="empty"><td colspan="4">No rules enabled.</td></tr>';
 }
 
@@ -388,19 +691,28 @@ function drawScope() {
 
 function renderControls() {
   const active = clock.active;
+  const busy = !!procedure || starting;
   $('btnGoText').textContent = !active ? 'Start session' : clock.paused ? 'Resume' : 'Pause';
   $('btnGo').querySelector('i').className = `ti ti-player-${active && !clock.paused ? 'pause' : 'play'}`;
+  $('btnGo').disabled = busy;
   $('btnFinish').hidden = !active;
   $('btnRecalibrate').hidden = !active;
-  document.querySelectorAll('[data-panel="timing"] input, [data-panel="timing"] select, #timerPresets button, #sourceMode button')
-    .forEach(el => { el.disabled = active; });
+  $('btnCancelProc').hidden = !procedure;
+  document.querySelectorAll('[data-panel="timing"] input, [data-panel="timing"] select, #timerPresets button, #studySham button, #sourceMode button')
+    .forEach(el => { el.disabled = active || busy; });
+  for (const id of ['btnAssess', 'btnMeasureIaf']) $(id).disabled = active || busy;
+  document.querySelectorAll('#assessLength button').forEach(el => { el.disabled = busy; });
+  $('useIaf').disabled = !Number.isFinite(settings.bands.iaf) || active || busy;
+  // Blinded sessions hide the rule readout: it would show whether reward follows the rules.
+  document.body.classList.toggle('blinded', active && condition !== null);
+  document.body.classList.toggle('measuring', !!procedure);
   renderFocus();
 }
 
 // Focus mode: while a session runs, the rails fold away unless the viewer asks for them.
 function renderFocus() {
-  const running = clock.active && !clock.paused;
-  if (!clock.active) showPanels = false;
+  const running = (clock.active && !clock.paused) || !!procedure;
+  if (!clock.active && !procedure) showPanels = false;
   document.body.classList.toggle('focus', settings.focus && running && !showPanels);
   const btn = $('btnPanels');
   btn.hidden = !(settings.focus && running);
@@ -410,7 +722,7 @@ function renderFocus() {
 }
 
 function togglePanels() {
-  if (!(settings.focus && clock.active && !clock.paused)) return;
+  if (!(settings.focus && ((clock.active && !clock.paused) || procedure))) return;
   showPanels = !showPanels;
   renderFocus();
 }
@@ -523,7 +835,7 @@ function renderProtocol() {
         <button data-mode="up" class="${mode === 'up' ? 'active' : ''}" title="Reward at or above">↑</button>
         <button data-mode="down" class="${mode === 'down' ? 'active' : ''}" title="Reward at or below">↓</button>
       </div>
-      <input type="number" min="10" max="400" step="1" value="${r?.threshold ?? 100}" aria-label="${m.label} threshold, percent of baseline" title="% of baseline">
+      <input type="number" min="10" max="${m.absolute ? 100 : 400}" step="1" value="${r?.threshold ?? m.defaultThreshold ?? 100}" aria-label="${m.label} threshold, ${m.absolute ? 'absolute percent' : 'percent of baseline'}" title="${m.absolute ? 'absolute %' : '% of baseline'}">
     </div>`;
   }).join('');
 
@@ -541,6 +853,18 @@ function rulesFromDom(changed, mode, threshold) {
   const rules = settings.protocol.rules.filter(r => r.measure !== changed);
   if (mode !== 'off') rules.push({ measure: changed, mode, threshold });
   return MEASURES.map(m => rules.find(r => r.measure === m.k)).filter(Boolean);
+}
+
+function applyPreset(preset) {
+  commitProtocol({ presetId: preset.id, name: preset.name, rules: preset.rules.map(r => ({ ...r })), holdSec: preset.holdSec }, { fromPreset: true });
+  if (preset.id === 'balance' && !(settings.sensors.includes('AF7') && settings.sensors.includes('AF8'))) toast('Balance reads AF7 and AF8 regardless of the training sites.');
+  if (preset.pacer && !settings.breath.pacer) {
+    settings.breath.pacer = true;
+    pacer.reset();
+    persist();
+    renderBreath();
+    toast(`Pacer on at ${settings.breath.rate} breaths / min${settings.breath.resonance ? ', your resonance rate' : ''}. Change it under Breath.`);
+  }
 }
 
 function initProtocolPanel() {
@@ -561,10 +885,7 @@ function initProtocolPanel() {
   });
   $('presets').addEventListener('click', e => {
     const b = e.target.closest('button');
-    if (!b) return;
-    const preset = PRESETS.find(x => x.id === b.dataset.id);
-    commitProtocol({ presetId: preset.id, name: preset.name, rules: preset.rules.map(r => ({ ...r })), holdSec: preset.holdSec }, { fromPreset: true });
-    if (preset.id === 'balance' && !(settings.sensors.includes('AF7') && settings.sensors.includes('AF8'))) toast('Balance reads AF7 and AF8 regardless of the training sites.');
+    if (b) applyPreset(PRESETS.find(x => x.id === b.dataset.id));
   });
 
   $('rules').addEventListener('click', e => {
@@ -649,6 +970,9 @@ function initTimingPanel() {
     const b = e.target.closest('button');
     if (b && !b.disabled) commit({ ...settings.timer, ...TIMER_PRESETS.find(p => p.id === b.dataset.id) });
   });
+  $('studyCheckin').checked = settings.study.checkin;
+  $('studyCheckin').addEventListener('change', e => { settings.study.checkin = e.target.checked; persist(); });
+  seg('studySham', settings.study.sham, v => { settings.study = { ...settings.study, sham: v, queue: [] }; persist(); });
   for (const id of ['blocks', 'blockMin', 'blockSecs', 'breakMin', 'breakSecs', 'calibrationSec']) {
     $(id).addEventListener('change', () => commit({
       blocks: $('blocks').value,
@@ -715,6 +1039,9 @@ function initFeedbackPanel() {
 
 function resetSignal() {
   for (const ch of channels.values()) ch.reset();
+  heart.reset();
+  heartChart.clear();
+  pacerTrail.length = 0;
   engine.resetBaseline();
   spectrogram.clear();
   stripChart.clear();
@@ -723,6 +1050,7 @@ function resetSignal() {
 
 function setSource(next) {
   if (clock.active) return toast('Finish the session before switching source.', true);
+  if (procedure) stopProcedure();
   if (next === 'sim' && museConnected) disconnectMuse();
   source = next;
   resetSignal();
@@ -744,6 +1072,7 @@ function renderSource() {
     btn.querySelector('span').textContent = museConnecting ? 'Connecting…' : 'Connect Muse';
   }
   document.querySelectorAll('#sourceMode button').forEach(btn => { btn.disabled = museConnecting; });
+  renderBreath();
 }
 
 function initSignalPanel() {
@@ -804,12 +1133,30 @@ async function connectMuse() {
     if (museClient) disconnectMuse();
     museClient = new MuseClient();
     museClient.enableAux = true;
-    await museClient.connect();
+    museClient.enablePpg = true;
+    try {
+      await museClient.connect();
+      museHasPpg = true;
+    } catch (err) {
+      // The original Muse has no pulse sensor: reconnect over the same link without it.
+      const gatt = museClient.gatt;
+      if (!gatt) throw err;
+      museClient = new MuseClient();
+      museClient.enableAux = true;
+      await museClient.connect(gatt);
+      museHasPpg = false;
+    }
     museSubscriptions = [
       museClient.eegReadings.subscribe({
         next: handleMuseReading,
         error: err => toast(`EEG stream error: ${err.message || err}`, true)
       }),
+      ...(museHasPpg ? [museClient.ppgReadings.subscribe(r => {
+        // Infrared carries the clearest pulse of the three PPG channels.
+        if (source !== 'muse' || r.ppgChannel !== 1) return;
+        heart.pushPacket(r.index, r.samples);
+        lastPpgAt = performance.now();
+      })] : []),
       museClient.telemetryData.subscribe(t => {
         $('museInfo').textContent = `${museClient?.deviceName || 'Muse'} · ${FS} Hz · battery ${Math.round(t.batteryLevel)}%`;
       }),
@@ -827,7 +1174,7 @@ async function connectMuse() {
     $('museInfo').textContent = `${museClient.deviceName || 'Muse'} · streaming at ${FS} Hz`;
     settings.scope.view = 'traces';
     applyScopeView();
-    toast('Muse connected. Wait for every sensor to read good.');
+    toast(museHasPpg ? 'Muse connected with pulse. Wait for every sensor to read good.' : 'Muse connected. Wait for every sensor to read good.');
   } catch (err) {
     disconnectMuse();
     if (err?.name !== 'NotFoundError') toast(`Connection failed: ${err.message || err}`, true);
@@ -849,6 +1196,7 @@ function disconnectMuse() {
   try { museClient?.disconnect(); } catch {}
   museClient = null;
   museConnected = false;
+  museHasPpg = false;
   $('museInfo').textContent = 'Muse 2 or Muse S over Web Bluetooth.';
   renderSource();
 }
@@ -877,10 +1225,11 @@ function initScope() {
   stripChart = new StripChart($('stripCanvas'));
   summaryChart = new StripChart($('summaryCanvas'));
   trendChart = new TrendChart($('trendCanvas'));
+  heartChart = new HeartChart($('heartCanvas'));
   spectrumChart.scale = settings.scope.scale;
   seg('scopeView', settings.scope.view, v => { settings.scope.view = v; applyScopeView(); persist(); });
   seg('spectrumScale', settings.scope.scale, v => { settings.scope.scale = v; spectrumChart.setScale(v); applyScopeView(); persist(); });
-  $('bandLegend').innerHTML = BANDS.map(b => `<span><i style="background:var(${b.color})"></i>${b.k[0].toUpperCase() + b.k.slice(1)} <em>${b.lo}–${b.hi}</em></span>`).join('');
+  applyBands();
   applyScopeView();
 }
 
@@ -891,7 +1240,40 @@ function openSummary(session, fresh = false) {
   openSessionId = session.id;
   $('summaryTitle').textContent = fresh ? 'Session complete' : new Date(session.startedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
   const setup = session.setup?.protocol ? describeProtocol(normalizeProtocol(session.setup.protocol)) : `${session.protocol} (${session.target})`;
-  $('summarySub').textContent = `${session.source === 'muse' ? 'Muse' : 'Simulated'} · ${(session.sensors || []).join(' + ') || '—'} · ${setup}`;
+  const extras = [
+    session.bands?.iaf && `bands at ${session.bands.iaf} Hz alpha`,
+    session.breath?.rate && `pacer ${session.breath.rate} / min`,
+    session.stats.heartRate && `${Math.round(session.stats.heartRate)} bpm`,
+    session.stats.coherencePct !== null && session.stats.coherencePct !== undefined && `coherence ${session.stats.coherencePct}%`
+  ].filter(Boolean);
+  $('summarySub').textContent = `${session.source === 'muse' ? 'Muse' : 'Simulated'} · ${(session.sensors || []).join(' + ') || '—'} · ${setup}${extras.length ? ` · ${extras.join(' · ')}` : ''}`;
+  const reveal = $('summaryReveal');
+  reveal.hidden = !session.condition;
+  if (session.condition) {
+    const guess = session.checkins?.guess;
+    const guessText = !guess ? '' : guess === 'unsure' ? ' You weren’t sure.' : guess === session.condition ? ' You guessed right.' : ' You guessed the other way.';
+    reveal.className = `reveal ${session.condition}`;
+    reveal.innerHTML = session.condition === 'sham'
+      ? `<b>Sham session.</b> The feedback replayed your usual reward pattern. Your rules were actually met ${session.stats.trueInZonePct}% of the time.${guessText}`
+      : `<b>Real session.</b> The feedback followed your rules.${guessText}`;
+  }
+  const c = session.checkins;
+  $('summaryCheckins').hidden = !(c?.pre || c?.post);
+  if (c?.pre || c?.post) {
+    const row = (label, get, unit = '', lowerBetter = false) => {
+      const a = c.pre ? get(c.pre) : null, b = c.post ? get(c.post) : null;
+      const d = a !== null && a !== undefined && b !== null && b !== undefined ? b - a : null;
+      const better = d === null || d === 0 ? '' : (d < 0) === lowerBetter ? 'up' : 'down';
+      return `<tr><td>${label}</td><td>${a ?? '—'}${a !== null && a !== undefined ? unit : ''}</td><td>${b ?? '—'}${b !== null && b !== undefined ? unit : ''}</td><td class="delta ${better}">${d === null ? '—' : `${d > 0 ? '+' : ''}${d}${unit}`}</td></tr>`;
+    };
+    const tested = c.pre?.pvt || c.post?.pvt;
+    $('summaryCheckinRows').innerHTML = [
+      tested && row('Reaction time, median', x => x.pvt?.medianMs ?? null, ' ms', true),
+      tested && row('Lapses (≥ 500 ms)', x => x.pvt?.lapses ?? null, '', true),
+      row('Calm', x => x.calm ?? null),
+      row('Alert', x => x.alert ?? null)
+    ].filter(Boolean).join('');
+  }
   $('sumZone').textContent = `${session.stats.timeInZonePct}%`;
   $('sumStreak').textContent = `${session.stats.bestStreakSeconds}s`;
   $('sumTime').textContent = formatClock(session.stats.totalDurationSeconds);
@@ -913,14 +1295,41 @@ function openJournal() {
   $('journalRows').innerHTML = history.length ? history.map(s => `<tr data-id="${s.id}">
     <td>${new Date(s.startedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</td>
     <td>${esc(s.setup?.protocol?.name || s.protocol)}</td><td>${s.source === 'muse' ? 'Muse' : 'Sim'}</td>
+    <td>${s.condition === 'sham' ? '<span class="tag sham">sham</span>' : s.condition === 'real' ? '<span class="tag">real</span>' : '—'}</td>
     <td>${formatClock(s.stats.totalDurationSeconds)}</td><td>${s.stats.timeInZonePct}%</td>
     <td>${s.stats.bestStreakSeconds}s</td><td>${s.stats.score}</td></tr>`).join('')
-    : '<tr class="empty"><td colspan="7">No sessions yet. Finish one and it appears here.</td></tr>';
+    : '<tr class="empty"><td colspan="8">No sessions yet. Finish one and it appears here.</td></tr>';
+  renderComparison(history);
   const recent = history.slice(0, 30).reverse();
   $('trendHint').textContent = recent.length ? `last ${recent.length} · oldest to newest` : '';
   showModal('journalModal');
   trendChart.fit();
   trendChart.draw(recent);
+}
+
+function renderComparison(history) {
+  const c = compareConditions(history);
+  $('studyCompare').hidden = !(c.real.n || c.sham.n);
+  if (!(c.real.n || c.sham.n)) return;
+  const fmt = (m, unit, digits = 0) => m.mean === null ? '—'
+    : `${m.mean > 0 && unit !== '%' ? '+' : ''}${m.mean.toFixed(digits)}${unit}${m.se !== null ? `<span class="sub">± ${m.se.toFixed(digits)} · n ${m.n}</span>` : `<span class="sub">n ${m.n}</span>`}`;
+  const diff = (a, b, unit, digits = 0) => a.mean === null || b.mean === null ? '—'
+    : `${a.mean - b.mean > 0 ? '+' : ''}${(a.mean - b.mean).toFixed(digits)}${unit}`;
+  const rows = [
+    ['Rules met', 'trueZone', '%', 0, 'How often your rules were actually met, whatever the feedback showed.'],
+    ['Reaction time change', 'rt', ' ms', 0, 'After minus before. Negative is faster.'],
+    ['Calm change', 'calm', '', 1, 'After minus before, 1–7 scale.'],
+    ['Alert change', 'alert', '', 1, 'After minus before, 1–7 scale.']
+  ];
+  $('studyRows').innerHTML = rows.map(([label, key, unit, digits, tip]) =>
+    `<tr title="${tip}"><td>${label}</td><td>${fmt(c.real[key], unit, digits)}</td><td>${fmt(c.sham[key], unit, digits)}</td><td>${diff(c.real[key], c.sham[key], unit, digits)}</td></tr>`).join('');
+  $('studyHint').textContent = `${c.real.n} real · ${c.sham.n} sham`;
+  const g = c.guesses;
+  const few = Math.min(c.real.n, c.sham.n) < 5;
+  $('studyNote').textContent = [
+    g.total ? `You named the condition correctly in ${g.correct} of ${g.total} session${g.total === 1 ? '' : 's'}${g.total >= 6 ? (g.correct / g.total > 0.75 ? ', so the blind may be leaking.' : ', close to chance: the blind is holding.') : '.'}` : '',
+    few ? 'Aim for at least five of each before reading much into a difference; ± is one standard error.' : 'A difference larger than about twice its standard errors is worth taking seriously.'
+  ].filter(Boolean).join(' ');
 }
 
 function download(content, fileName, type) {
@@ -932,7 +1341,7 @@ function download(content, fileName, type) {
 }
 
 function initModals() {
-  document.querySelectorAll('.modal').forEach(modal => {
+  document.querySelectorAll('.modal:not(#checkinModal)').forEach(modal => {
     modal.addEventListener('click', e => {
       if (e.target === modal || e.target.closest('[data-close]')) modal.classList.remove('show');
     });
@@ -988,7 +1397,7 @@ function initModals() {
   });
 
   const welcomed = () => { settings.welcomed = true; persist(); hideModal('welcomeModal'); };
-  $('btnWelcomeDemo').addEventListener('click', () => { welcomed(); startSession(); });
+  $('btnWelcomeDemo').addEventListener('click', () => { welcomed(); requestStart(); });
   $('btnWelcomeMuse').addEventListener('click', () => {
     welcomed();
     document.querySelector('.tabs [data-tab="signal"]').click();
@@ -1012,12 +1421,16 @@ function initMCP() {
       timeInZonePct: stats.usable > 0 ? Math.round((stats.rewardSec / stats.usable) * 100) : 0,
       currentStreak: stats.streak,
       bestStreak: stats.bestStreak,
-      electrodeQuality: Object.fromEntries([...channels].map(([k, v]) => [k, v.quality.state]))
+      electrodeQuality: Object.fromEntries([...channels].map(([k, v]) => [k, v.quality.state])),
+      heart: { state: pulse.state, bpm: pulse.hr, rmssdMs: pulse.rmssd, coherence: condition ? null : pulse.coherence },
+      pacer: pacerOn() ? { rate: pacer.rate, inhale: pacer.inhale } : null,
+      alphaPeakHz: settings.bands.iaf,
+      personalBands: activeBands() !== BANDS
     }),
     setProtocol: (id) => {
       const preset = PRESETS.find(p => p.id === id);
       if (!preset) return false;
-      commitProtocol({ presetId: preset.id, name: preset.name, rules: preset.rules.map(r => ({ ...r })), holdSec: preset.holdSec }, { fromPreset: true });
+      applyPreset(preset);
       return true;
     },
     setSimulation: (args) => sim.configure({ state: args.mentalState, intensity: args.intensity, stability: args.stability })
@@ -1051,6 +1464,7 @@ function init() {
   initFeedbackPanel();
   initScenePanel();
   initSignalPanel();
+  initBreathPanel();
   initModals();
   initMCP();
 
@@ -1106,7 +1520,9 @@ function init() {
       flock,
       backdrop,
       advance(seconds) { for (let i = 0; i < seconds * 60; i++) step(lastFrame + 1000 / 60); },
-      snapshot: () => ({ phase: clock.phase, block: clock.block, paused: clock.paused, signal, calibrated: engine.calibrated, reward: result?.reward, stats: { ...stats }, rows: result?.rows.map(r => ({ m: r.measure, pct: r.pct, target: r.target, pass: r.pass })) })
+      snapshot: () => ({ phase: clock.phase, block: clock.block, paused: clock.paused, signal, calibrated: engine.calibrated, reward: result?.reward, trueReward: truth?.reward, condition, procedure: procedure?.kind ?? null, pulse: { ...pulse }, pacer: pacerLevel, stats: { ...stats }, rows: result?.rows.map(r => ({ m: r.measure, pct: r.pct, target: r.target, pass: r.pass })) }),
+      heart,
+      simHeart
     };
   }
 }

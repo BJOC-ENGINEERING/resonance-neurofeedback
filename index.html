@@ -45,6 +45,7 @@
       <button role="tab" class="active" data-tab="protocol">Protocol</button>
       <button role="tab" data-tab="timing">Timing</button>
       <button role="tab" data-tab="feedback">Feedback</button>
+      <button role="tab" data-tab="breath">Breath</button>
       <button role="tab" data-tab="signal">Signal</button>
     </nav>
     <nav class="protocol-shortcuts" id="protocolShortcuts" aria-label="Protocol sections">
@@ -105,6 +106,19 @@
       </div>
       <p class="summary" id="timerSummary"></p>
       <p class="note">The clock counts usable signal only. Pauses, lost contact and hidden tabs stop it; breaks mute feedback. The demo uses a 6 second baseline.</p>
+
+      <h2>Self-experiment</h2>
+      <label class="check field"><input type="checkbox" id="studyCheckin">Check in before and after each session</label>
+      <p class="note">Two 1–7 ratings (calm, alert) and a 60 second reaction test, before the baseline and after the last block.</p>
+      <div class="field">
+        <label><span>Blinded sham sessions</span></label>
+        <div class="seg" id="studySham">
+          <button data-v="off" class="active">Off</button>
+          <button data-v="third">1 in 3</button>
+          <button data-v="half">1 in 2</button>
+        </div>
+      </div>
+      <p class="note">A sham session looks and sounds like any other, but its feedback replays your usual reward pattern instead of following your signal. You find out which it was only after the session. <b>Journal</b> compares the two, so you can see whether the training itself makes a difference for you.</p>
     </section>
 
     <section class="tabpanel" data-panel="feedback">
@@ -177,6 +191,36 @@
       </div>
     </section>
 
+    <section class="tabpanel" data-panel="breath">
+      <h2>Pacer</h2>
+      <label class="check field"><input type="checkbox" id="pacerOn">Breathing guide on the stage</label>
+      <div class="field">
+        <label><span>Rate</span><b id="pacerRateLabel">6.0 / min</b></label>
+        <input type="range" id="pacerRate" min="3.5" max="10" step="0.1" value="6" aria-label="Breaths per minute">
+      </div>
+      <div class="field">
+        <label><span>Breath shape</span></label>
+        <div class="seg" id="pacerInhale">
+          <button data-v="0.4" class="active">In 4 · out 6</button>
+          <button data-v="0.5">Even</button>
+        </div>
+      </div>
+      <label class="check field"><input type="checkbox" id="pacerSound" checked>Breath sound that swells with the ring</label>
+      <p class="note">The ring widens as you breathe in and narrows as you breathe out, and the flock breathes with it. A slightly longer out-breath is easier for most people.</p>
+
+      <h2>Resonance rate</h2>
+      <div class="resonance" id="resonanceResult"></div>
+      <div class="seg field" id="assessLength">
+        <button data-v="60" class="active">Quick · 6 min</button>
+        <button data-v="120">Full · 12 min</button>
+      </div>
+      <button class="btn primary field wide" id="btnAssess"><i class="ti ti-wave-sine" aria-hidden="true"></i>Find my resonance rate</button>
+      <p class="note">Paces six rates, from 7 down to 4.5 breaths a minute, and measures how far your heart rate rises and falls with each breath. The rate with the widest swing is your resonance rate. Sit upright, breathe gently through your nose and don't force it.</p>
+
+      <h2>Pulse</h2>
+      <p class="note" id="pulseNote">Muse 2 and Muse S read your pulse optically from the forehead. In the simulator a virtual heart follows the pacer, with its own resonance rate.</p>
+    </section>
+
     <section class="tabpanel" data-panel="signal">
       <h2>Source</h2>
       <div class="seg" id="sourceMode">
@@ -221,6 +265,12 @@
         </div>
         <p class="note">Pink background noise with rhythms that wax and wane, run through the same filters, spectra and quality checks as a headset. It does not read you.</p>
       </div>
+
+      <h2>Alpha peak</h2>
+      <div class="iaf" id="iafResult"></div>
+      <label class="check field"><input type="checkbox" id="useIaf">Anchor bands to my alpha peak</label>
+      <button class="btn field wide" id="btnMeasureIaf"><i class="ti ti-eye-closed" aria-hidden="true"></i>Measure · 60 s, eyes closed</button>
+      <p class="note">Your alpha peak sits somewhere between 8 and 12 Hz. With personal bands, the theta, alpha and beta edges move with it, so a 9 Hz alpha is not counted as theta. Changing bands records a new baseline.</p>
     </section>
   </aside>
 
@@ -252,6 +302,7 @@
       </div>
 
       <div class="stage-mid">
+        <div class="pacer" id="pacer" hidden aria-hidden="true"><div class="pacer-orb"></div><span id="pacerText">in</span></div>
         <svg class="hold-ring" id="holdRing" viewBox="0 0 64 64" aria-hidden="true">
           <circle cx="32" cy="32" r="28" class="track"/>
           <circle cx="32" cy="32" r="28" class="fill" id="holdArc"/>
@@ -273,6 +324,7 @@
       <button class="btn primary big" id="btnGo"><i class="ti ti-player-play"></i><span id="btnGoText">Start session</span></button>
       <button class="btn" id="btnFinish" hidden><i class="ti ti-flag"></i>Finish</button>
       <button class="btn ghost" id="btnRecalibrate" hidden><i class="ti ti-refresh"></i>New baseline</button>
+      <button class="btn" id="btnCancelProc" hidden><i class="ti ti-player-stop"></i>Stop</button>
       <span class="spacer"></span>
       <button class="btn ghost" id="btnPanels" hidden aria-pressed="false" title="Show or hide the side panels (P)"><i class="ti ti-layout-sidebar-left-expand" aria-hidden="true"></i><span id="panelsText">Show panels</span></button>
       <button class="btn ghost" id="btnMute" aria-pressed="false"><i class="ti ti-volume"></i><span id="muteText">Sound on</span></button>
@@ -302,6 +354,18 @@
         <div class="marks" id="milestoneMarks"></div>
         <span class="hint" id="milestoneText">next mark at 5 s</span>
       </div>
+    </div>
+
+    <div class="card" id="heartCard" hidden>
+      <div class="card-head"><h3>Heart</h3><span class="state" id="heartState">searching</span></div>
+      <div class="tiles">
+        <div class="tile"><b id="hrNow">—</b><span>bpm</span></div>
+        <div class="tile"><b id="hrvNow">—</b><span>rmssd ms</span></div>
+        <div class="tile"><b id="cohNow">—</b><span>coherence</span></div>
+        <div class="tile"><b id="rhythmNow">—</b><span>rhythm / min</span></div>
+      </div>
+      <div class="chart heart-chart"><canvas id="heartCanvas"></canvas></div>
+      <p class="hint">heart rate, last 60 s &middot; shaded while the pacer breathes in</p>
     </div>
 
     <div class="card scope">
@@ -352,6 +416,7 @@
       <div><h2 id="summaryTitle">Session complete</h2><p class="hint" id="summarySub"></p></div>
       <button class="btn ghost icon" data-close aria-label="Close"><i class="ti ti-x"></i></button>
     </div>
+    <div class="reveal" id="summaryReveal" hidden></div>
     <div class="tiles four">
       <div class="tile"><b id="sumZone">0%</b><span>in zone</span></div>
       <div class="tile"><b id="sumStreak">0s</b><span>best streak</span></div>
@@ -363,6 +428,10 @@
     <div class="table-wrap"><table class="measures blocks-table">
       <thead><tr><th>Block</th><th>Length</th><th>In zone</th><th>Best streak</th><th>Recoveries</th><th>Alpha</th><th>Beta</th><th>Theta</th></tr></thead>
       <tbody id="summaryBlocks"></tbody>
+    </table></div>
+    <div class="table-wrap" id="summaryCheckins" hidden><table class="measures checkin-table">
+      <thead><tr><th>Check-in</th><th>Before</th><th>After</th><th>Change</th></tr></thead>
+      <tbody id="summaryCheckinRows"></tbody>
     </table></div>
     <label class="field"><span class="hint">Notes &mdash; what did you try?</span>
       <textarea id="summaryNotes" rows="3" maxlength="2000" placeholder="Eyes closed, slow exhale, counted breaths…"></textarea>
@@ -381,11 +450,19 @@
       <div><h2 id="journalTitle">Journal</h2><p class="hint">Saved in this browser only. Settings, reward events and notes; never raw EEG.</p></div>
       <button class="btn ghost icon" data-close aria-label="Close"><i class="ti ti-x"></i></button>
     </div>
-    <div class="card-head"><h3>Time in zone per session</h3><span class="hint" id="trendHint"></span></div>
+    <div class="card-head"><h3>Rules met per session</h3><span class="hint" id="trendHint"></span></div>
     <div class="chart tall"><canvas id="trendCanvas"></canvas></div>
+    <div class="compare" id="studyCompare" hidden>
+      <div class="card-head"><h3>Real vs sham</h3><span class="hint" id="studyHint"></span></div>
+      <div class="table-wrap"><table class="measures compare-table">
+        <thead><tr><th></th><th>Real</th><th>Sham</th><th>Difference</th></tr></thead>
+        <tbody id="studyRows"></tbody>
+      </table></div>
+      <p class="note" id="studyNote"></p>
+    </div>
     <div class="table-wrap">
       <table class="measures journal-table">
-        <thead><tr><th>When</th><th>Protocol</th><th>Source</th><th>Training</th><th>In zone</th><th>Streak</th><th>Score</th></tr></thead>
+        <thead><tr><th>When</th><th>Protocol</th><th>Source</th><th>Feedback</th><th>Training</th><th>In zone</th><th>Streak</th><th>Score</th></tr></thead>
         <tbody id="journalRows"></tbody>
       </table>
     </div>
@@ -424,9 +501,40 @@
       <li><b>Baseline.</b> A short recording sets your personal 100% for every measure. Targets are percentages of that baseline, so protocols carry between people and days.</li>
       <li><b>Rules.</b> Train a measure up, keep another down, or both. Reward needs every enabled rule to pass, optionally sustained for a hold.</li>
       <li><b>Reward.</b> The flock gathers as you hold, then colours and speeds up. Chimes or a drone follow the same signal. Milestones mark accumulated rewarded time.</li>
-      <li><b>Review.</b> Every session logs blocks, streaks, recoveries and a reward timeline. Add notes and watch the trend.</li>
+      <li><b>Heart.</b> Muse 2 and Muse S also read your pulse. Breathe with the pacer at your resonance rate and heart rate rises and falls with each breath; coherence measures how smooth and steady that wave is.</li>
+      <li><b>Review.</b> Every session logs blocks, streaks, recoveries and a reward timeline. Add notes and watch the trend. Blinded sham sessions and before-and-after check-ins let you test whether the training does anything for you.</li>
     </ol>
     <p class="note">Resonance is an educational tool. It is not a medical device and makes no claim to diagnose, treat or measure any condition. Consumer EEG is sensitive to fit and movement.</p>
+  </div>
+</div>
+
+<!-- Check-in -->
+<div class="modal" id="checkinModal" role="dialog" aria-modal="true" aria-labelledby="checkinTitle">
+  <div class="sheet">
+    <div class="sheet-head">
+      <div><h2 id="checkinTitle">Before you start</h2><p class="hint" id="checkinSub"></p></div>
+      <button class="btn ghost icon" id="btnCheckinCancel" aria-label="Skip check-in"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="checkinForm">
+      <div class="rating" data-key="calm"><span>How calm do you feel?</span><div class="scale"></div><em><i>tense</i><i>calm</i></em></div>
+      <div class="rating" data-key="alert"><span>How alert do you feel?</span><div class="scale"></div><em><i>drowsy</i><i>alert</i></em></div>
+      <div class="rating guess" id="checkinGuess" hidden>
+        <span>Was that session's feedback real or sham?</span>
+        <div class="seg" id="guessChoice">
+          <button data-v="real">Real</button>
+          <button data-v="unsure">Not sure</button>
+          <button data-v="sham">Sham</button>
+        </div>
+      </div>
+      <div class="row between field">
+        <button class="btn ghost" id="btnSkipPvt">Skip reaction test</button>
+        <button class="btn primary" id="btnCheckinNext" disabled>Start reaction test</button>
+      </div>
+    </div>
+    <div id="pvtPanel" hidden>
+      <button class="pvt-box" id="pvtBox"><b id="pvtCounter"></b><span id="pvtPrompt">Press Space or tap here as soon as the counter appears.</span></button>
+      <div class="row between field"><span class="hint" id="pvtProgress"></span><span class="hint" id="pvtLast"></span></div>
+    </div>
   </div>
 </div>
 

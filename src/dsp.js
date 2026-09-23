@@ -275,3 +275,48 @@ export class AdaptiveBaseline {
     return Math.max(0, Math.min(1, 0.5 + 0.45 * tanh));
   }
 }
+
+// Individual alpha frequency (IAF) bands: every edge up to 30 Hz moves with the alpha peak,
+// so a 10 Hz peak gives the standard bands. Upper beta and gamma stay fixed.
+export const IAF_RANGE = [7.5, 12.5];
+export function personalBands(iaf) {
+  if (!Number.isFinite(iaf)) return BANDS;
+  const s = Math.max(IAF_RANGE[0], Math.min(IAF_RANGE[1], iaf)) - 10;
+  const deltaTop = Math.max(2.5, 4 + s);
+  return BANDS.map(b => {
+    if (b.k === 'delta') return { ...b, hi: deltaTop };
+    if (b.k === 'theta') return { ...b, lo: deltaTop, hi: 8 + s };
+    if (b.k === 'alpha') return { ...b, lo: 8 + s, hi: 13 + s };
+    if (b.k === 'beta') return { ...b, lo: 13 + s };
+    return b;
+  });
+}
+
+// Alpha peak from an averaged resting spectrum. The 1/f background is fitted in log-log space
+// outside 7–14 Hz and removed; the peak is the centre of gravity of the power left above it
+// between 7 and 13 Hz, which is steadier than the single highest bin when alpha is split or broad.
+// strength: the largest rise above the background, in dB. Below about 1.5 dB there is no reliable peak.
+export function estimateAlphaPeak(spectrum) {
+  const pts = [];
+  for (let k = 1; k < spectrum.length; k++) {
+    const hz = k * DF;
+    if (hz < 2 || hz > 40 || (hz >= 7 && hz <= 14) || (hz >= 48 && hz <= 52) || spectrum[k] <= 0) continue;
+    pts.push([Math.log10(hz), Math.log10(spectrum[k])]);
+  }
+  if (pts.length < 8) return null;
+  const n = pts.length;
+  const mx = pts.reduce((s, p) => s + p[0], 0) / n, my = pts.reduce((s, p) => s + p[1], 0) / n;
+  let sxy = 0, sxx = 0;
+  for (const [x, y] of pts) { sxy += (x - mx) * (y - my); sxx += (x - mx) ** 2; }
+  const slope = sxy / sxx, icpt = my - slope * mx;
+  const background = (k) => Math.pow(10, icpt + slope * Math.log10(k * DF));
+  let num = 0, den = 0, rise = -Infinity;
+  for (let k = Math.ceil(7 / DF); k <= Math.floor(13 / DF); k++) {
+    const excess = Math.max(0, spectrum[k] - background(k));
+    num += excess * k * DF;
+    den += excess;
+    rise = Math.max(rise, 10 * Math.log10(Math.max(spectrum[k], 1e-12) / background(k)));
+  }
+  if (den <= 0) return { iaf: null, strength: Math.round(rise * 10) / 10 };
+  return { iaf: Math.round((num / den) * 10) / 10, strength: Math.round(rise * 10) / 10 };
+}

@@ -25,6 +25,7 @@ export class FlockCanvas {
     this.mouse = { x: 0, y: 0, active: false };
 
     this.glow = null;
+    this.breath = null;        // pacer lung level 0..1, or null when no pacer runs
 
     this.fit();
     this.setCount(options.count || 64);
@@ -76,6 +77,7 @@ export class FlockCanvas {
   }
 
   setDimmed(dimmed) { this.dimmed = dimmed; }
+  setBreath(level) { this.breath = level; }
   setVariant(variant) { this.variant = variant; }
   setPalette({ hue, light }) { this.hue = hue; this.light = light; this.glow = null; }
 
@@ -189,6 +191,16 @@ export class FlockCanvas {
       const pull = 0.00025 + 0.0022 * this.gather;
       b1.vx += (cx - b1.x) * pull;
       b1.vy += (cy - b1.y) * pull;
+
+      // With a pacer, the flock holds a ring that widens on the in-breath and narrows on the out-breath.
+      if (this.breath !== null && !this.dimmed) {
+        const rx = b1.x - cx, ry = b1.y - cy;
+        const d = Math.hypot(rx, ry) || 1;
+        const ring = Math.min(this.width, this.height) * (0.1 + 0.26 * this.breath);
+        const k = Math.max(-1.2, Math.min(1.2, (ring - d) * 0.006)) * (REDUCED_MOTION ? 0.5 : 1);
+        b1.vx += (rx / d) * k;
+        b1.vy += (ry / d) * k;
+      }
 
       // Wander keeps an unrewarded flock from settling into one stream.
       const jitter = 0.12 * (1 - this.colorTransition);

@@ -39,6 +39,37 @@ Use **Space** to start or pause, **F** for fullscreen, and **M** to mute. Open *
 
 For a more immersive view, click **Try fullscreen** in the upper-right corner of the flock. This button stays visible with a soft green glow whenever you are outside fullscreen. In fullscreen, click **Exit fullscreen** or press **Esc** to return.
 
+## Personal alpha bands
+
+Alpha peaks somewhere between about 8 and 12 Hz, and the standard 8–13 Hz band fits some people badly. To anchor the bands to your own peak:
+
+1. Open **Signal → Alpha peak** and click **Measure · 60 s, eyes closed**.
+2. Close your eyes, relax your face and stay still. A soft chime marks the end. Movement pauses the clock.
+3. The result shows your peak in Hz. **Anchor bands to my alpha peak** turns on automatically; untick it to go back to standard bands.
+
+Theta, alpha, upper alpha and beta all move with the peak. The spectrum legend shows the edges in use. Changing bands clears the baseline, so start a session to record a new one.
+
+## Resonance breathing
+
+Muse 2 and Muse S read your pulse through a light sensor on the forehead. The **Heart** card shows heart rate, RMSSD (beat-to-beat variability), coherence, and the dominant rhythm in breaths a minute. Its chart shades each in-breath from the pacer. When your breathing is at resonance, heart rate rises with every shaded span and falls between them.
+
+1. Open **Breath**. Choose **Quick · 6 min** or **Full · 12 min** and click **Find my resonance rate**.
+2. Breathe with the ring on the stage: in as it widens, out as it narrows. It steps from 7 down to 4.5 breaths a minute.
+3. Each rate is scored by how far your heart rate swings with each breath. The widest swing is your resonance rate, and the pacer switches to it.
+
+To train, pick the **Breath coherence** preset (heart coherence only) or **Heart & mind** (coherence plus alpha). Both turn the pacer on. Coherence is absolute, not a share of baseline, and it needs about 30 seconds of clean pulse before it reads. You can also switch the pacer on under **Breath** for any protocol.
+
+The original Muse (2016) has no pulse sensor. Protocols with heart coherence need a Muse 2, a Muse S, or the simulator.
+
+## Test whether it works for you
+
+Under **Timing → Self-experiment**:
+
+- **Check in before and after** asks you to rate how calm and alert you feel (1–7) and runs a 60 second reaction test. When the counter appears, press **Space** or tap it as fast as you can.
+- **Blinded sham sessions** makes 1 in 3, or 1 in 2, of your sessions sham. A sham session looks and sounds normal, but its feedback replays your usual reward pattern instead of following your signal. The rule readout and coherence are hidden during every blinded session, so neither kind gives itself away. Keep the side panels folded while you train.
+
+After a blinded session you are asked whether you think it was real or sham, and only then is it revealed. **Journal → Real vs sham** compares the two kinds on how often your rules were actually met, and on the before-and-after changes. Aim for at least five of each before reading much into a difference.
+
 ## Return to the main screen
 
 - **Documentation:** click **Docs** in the top bar to read the README or this quick-start guide in a popup. Close it with **×** or **Esc**.
@@ -60,4 +91,4 @@ Choose **Signal → Simulated**. Pick a simulated state and start a session to e
 - **Poor signal:** adjust the fit and sensor contact, relax your jaw, and stay still. Check the Sensors card before starting.
 - **Connection lost:** reconnect, wait for good signal, and resume the paused session.
 
-EEG processing stays in your browser. Settings and session summaries are stored locally; raw EEG is not saved. Export sessions you want to keep before clearing browser data.
+EEG and pulse processing stay in your browser. Settings and session summaries are stored locally; raw EEG and PPG are not saved. Export sessions you want to keep before clearing browser data.

@@ -174,3 +174,82 @@ export class SimulatedEEG {
     return out;
   }
 }
+
+// Synthetic pulse: heart rate follows breathing (respiratory sinus arrhythmia), with a personal
+// resonance rate where the swing is widest. Beats come from integral pulse-frequency modulation and
+// are rendered as a 64 Hz PPG waveform, so the demo runs through the real beat detector.
+export class SimulatedHeart {
+  static FS = 64;
+
+  constructor({ seed = 7, restHr = 64, resonanceBpm = null } = {}) {
+    this.rand = mulberry32(seed);
+    this.restHr = restHr;
+    // Personal resonance somewhere between 5 and 6.5 breaths a minute unless given.
+    this.resonanceHz = (resonanceBpm ?? 5 + this.rand() * 1.5) / 60;
+    this.paced = null;           // breaths per minute while following a pacer, else null
+    this.compliance = 0.7;       // 0..1, how closely paced breathing keeps time with the guide
+    this.t = 0;
+    this.carry = 0;
+    this.breathPhase = 0;
+    this.spontaneous = new Wander(5);
+    this.lf = new Wander(9);
+    this.hf = new Wander(1.5);
+    this.jitter = new Wander(3);
+    this.heartPhase = 0.5;
+    this.beatTimes = [];
+    this.spare = null;
+  }
+
+  gauss = () => {
+    if (this.spare !== null) { const s = this.spare; this.spare = null; return s; }
+    let u = 0;
+    while (u === 0) u = this.rand();
+    const r = Math.sqrt(-2 * Math.log(u)), th = 2 * Math.PI * this.rand();
+    this.spare = r * Math.sin(th);
+    return r * Math.cos(th);
+  };
+
+  // rateBpm: follow a pacer at this rate; null: breathe freely near 14 breaths a minute.
+  setBreathing(rateBpm) { this.paced = Number.isFinite(rateBpm) ? rateBpm : null; }
+
+  // Heart-rate swing amplitude (bpm) for breathing at f Hz: a vagal floor plus the resonance peak.
+  rsaAmplitude(f) { return 2 + 6 / (1 + ((f - this.resonanceHz) / 0.012) ** 2); }
+
+  generate(dtSeconds) {
+    const fs = SimulatedHeart.FS;
+    const exact = Math.max(0, dtSeconds) * fs + this.carry;
+    const count = Math.floor(exact);
+    this.carry = exact - count;
+    const out = new Float32Array(count);
+    const dt = 1 / fs;
+    for (let i = 0; i < count; i++) {
+      const breathHz = this.paced !== null
+        ? this.paced / 60
+        : Math.max(0.15, 0.24 + this.spontaneous.step(dt, this.gauss) * 0.05);
+      // Free breathing is irregular; paced breathing keeps close time with the guide.
+      this.breathPhase += 2 * Math.PI * breathHz * dt + this.jitter.step(dt, this.gauss) * (this.paced !== null ? 0.0004 + (1 - this.compliance) * 0.006 : 0.003);
+      const lag = -Math.atan((breathHz - this.resonanceHz) / 0.012);
+      const hr = this.restHr + this.lf.step(dt, this.gauss) * 2.2 + this.hf.step(dt, this.gauss) * 1.2 + this.rsaAmplitude(breathHz) * Math.sin(this.breathPhase + lag);
+
+      const before = this.heartPhase;
+      this.heartPhase += hr / 60 * dt;
+      if (this.heartPhase >= 1) {
+        this.heartPhase -= 1;
+        this.beatTimes.push(this.t + dt * (1 - before) / (1 - before + this.heartPhase));
+        if (this.beatTimes.length > 64) this.beatTimes.shift();
+      }
+
+      let pulse = 0;
+      for (let k = this.beatTimes.length - 1; k >= 0; k--) {
+        const tau = this.t - this.beatTimes[k] - 0.2; // pulse transit to the forehead
+        if (tau > 1.2) break;
+        if (tau < 0) continue;
+        pulse += Math.exp(-(((tau - 0.1) / 0.06) ** 2)) + 0.35 * Math.exp(-(((tau - 0.38) / 0.08) ** 2));
+      }
+      const baseline = 0.4 * Math.sin(this.breathPhase) + this.gauss() * 0.03;
+      out[i] = 52000 - 900 * (pulse + baseline);
+      this.t += dt;
+    }
+    return out;
+  }
+}

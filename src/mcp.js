@@ -17,7 +17,7 @@ export function registerResonanceMCP(stateAccessor) {
   // 1. Read session state
   register({
     name: 'read_session_state',
-    description: 'Read current neurofeedback session state, protocol, active target, and electrode quality diagnostics. Does not expose raw EEG.',
+    description: 'Read current neurofeedback session state, protocol, active target, electrode quality, pulse summary (heart rate, RMSSD, coherence) and breathing pacer. Does not expose raw EEG or PPG. Coherence is withheld during blinded sessions.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: async () => {
       const s = stateAccessor.getState();
@@ -33,7 +33,11 @@ export function registerResonanceMCP(stateAccessor) {
             timeInZonePct: s.timeInZonePct,
             currentStreak: s.currentStreak,
             bestStreak: s.bestStreak,
-            electrodeQuality: s.electrodeQuality
+            electrodeQuality: s.electrodeQuality,
+            heart: s.heart,
+            pacer: s.pacer,
+            alphaPeakHz: s.alphaPeakHz,
+            personalBands: s.personalBands
           }, null, 2)
         }]
       };
@@ -47,7 +51,7 @@ export function registerResonanceMCP(stateAccessor) {
     inputSchema: {
       type: 'object',
       properties: {
-        protocol: { type: 'string', enum: ['calm', 'sharpen', 'settle', 'deep', 'peak', 'balance', 'triad'] }
+        protocol: { type: 'string', enum: ['calm', 'sharpen', 'settle', 'deep', 'peak', 'balance', 'triad', 'breath', 'heartmind'] }
       },
       required: ['protocol'],
       additionalProperties: false

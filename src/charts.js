@@ -20,7 +20,7 @@ export function chartTheme() {
 export function refreshChartTheme() { cached = null; }
 
 const FONT = '10px ui-monospace, "SF Mono", Menlo, monospace';
-const bandAt = (hz) => BANDS.find(b => hz >= b.lo && hz < b.hi) || (hz >= 45 ? null : hz < 1 ? null : BANDS[BANDS.length - 1]);
+const bandAt = (hz, bands = BANDS) => bands.find(b => hz >= b.lo && hz < b.hi) || (hz >= 45 ? null : hz < 1 ? null : bands[bands.length - 1]);
 
 class Chart {
   constructor(canvas, { hover = true } = {}) {
@@ -79,9 +79,11 @@ export class SpectrumChart extends Chart {
     this.peak = 1;
     this.shown = null;
     this.spectrum = null;
+    this.bands = BANDS;
   }
 
   setScale(scale) { this.scale = scale; this.peak = 1; this.redraw(); }
+  setBands(bands) { this.bands = bands; this.redraw(); }
 
   draw(spectrum) {
     this.spectrum = spectrum;
@@ -138,7 +140,7 @@ export class SpectrumChart extends Chart {
 
     // One filled segment per band, with a surface gap at each boundary.
     const base = pad.t + ph;
-    for (const b of BANDS) {
+    for (const b of this.bands) {
       const k0 = Math.ceil(b.lo / DF), k1 = Math.floor(b.hi / DF);
       const x0 = xOf(b.lo) + 1, x1 = xOf(b.hi) - 1;
       ctx.beginPath();
@@ -159,7 +161,7 @@ export class SpectrumChart extends Chart {
     if (this.hoverX !== null && this.hoverX >= pad.l && this.hoverX <= w - pad.r) {
       const hz = Math.round(((this.hoverX - pad.l) / pw) * MAX_HZ / DF) * DF;
       const k = Math.round(hz / DF);
-      const band = bandAt(hz);
+      const band = bandAt(hz, this.bands);
       this.crosshair(xOf(hz), pad.t, base);
       ctx.fillStyle = th.txt;
       ctx.beginPath(); ctx.arc(xOf(hz), yOf(s[k]), 3, 0, Math.PI * 2); ctx.fill();
@@ -326,7 +328,8 @@ export class StripChart extends Chart {
   }
 }
 
-// In-zone % per saved session, oldest to newest.
+// Rules-met % per saved session, oldest to newest. Sham sessions plot what the rules said, not
+// what the feedback showed, in the warning colour.
 export class TrendChart extends Chart {
   draw(sessions) {
     this.sessions = sessions;
@@ -353,8 +356,8 @@ export class TrendChart extends Chart {
     const hovered = this.hoverX === null ? -1 : Math.floor((this.hoverX - pad.l) / slot);
     list.forEach((s, i) => {
       const x = pad.l + i * slot + 1;
-      const bh = Math.max(2, ph * (s.stats.timeInZonePct / 100));
-      ctx.fillStyle = th.accent;
+      const bh = Math.max(2, ph * ((s.stats.trueInZonePct ?? s.stats.timeInZonePct) / 100));
+      ctx.fillStyle = s.condition === 'sham' ? th.warn : th.accent;
       ctx.globalAlpha = hovered === -1 || hovered === i ? 1 : 0.45;
       ctx.beginPath();
       ctx.roundRect(x, pad.t + ph - bh, bar, bh, [Math.min(4, bar / 2), Math.min(4, bar / 2), 0, 0]);
@@ -363,7 +366,84 @@ export class TrendChart extends Chart {
     ctx.globalAlpha = 1;
     if (hovered >= 0 && hovered < list.length) {
       const s = list[hovered];
-      this.showTip(pad.l + hovered * slot + bar / 2, `<b>${s.stats.timeInZonePct}% in zone</b> ${new Date(s.startedAt).toLocaleDateString()} · ${s.setup?.protocol?.name || s.protocol}`);
+      const sham = s.condition === 'sham';
+      this.showTip(pad.l + hovered * slot + bar / 2, `<b>${s.stats.trueInZonePct ?? s.stats.timeInZonePct}% ${sham ? 'rules met · sham' : 'in zone'}</b> ${new Date(s.startedAt).toLocaleDateString()} · ${s.setup?.protocol?.name || s.protocol}`);
     } else this.tip?.classList.remove('show');
+  }
+}
+
+// Heart rate over the last minute, with the pacer's in-breaths shaded behind it.
+// When breathing is at resonance the line rises with each shaded span and falls between them.
+export class HeartChart extends Chart {
+  constructor(canvas, { seconds = 60, stepSeconds = 0.1 } = {}) {
+    super(canvas);
+    this.step = stepSeconds;
+    this.capacity = Math.round(seconds / stepSeconds);
+    this.hr = []; this.breath = [];
+  }
+
+  push(hr, breath) {
+    this.hr.push(hr); this.breath.push(breath);
+    if (this.hr.length > this.capacity) { this.hr.shift(); this.breath.shift(); }
+  }
+
+  clear() { this.hr = []; this.breath = []; this.redraw(); }
+
+  redraw() {
+    const { ctx, w, h } = this;
+    const th = chartTheme();
+    const pad = { l: 26, r: 4, t: 6, b: 6 };
+    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    ctx.clearRect(0, 0, w, h);
+    const n = this.hr.length;
+    const xOf = (i) => pad.l + pw * ((this.capacity - n + i) / (this.capacity - 1));
+
+    // Shade in-breaths: the pacer level sampled alongside heart rate.
+    ctx.fillStyle = th.accent; ctx.globalAlpha = 0.13;
+    for (let i = 1; i < n; i++) {
+      const b = this.breath[i];
+      if (b === null || b === undefined) continue;
+      const rising = b > (this.breath[i - 1] ?? b) + 1e-4 || b > 0.999;
+      if (rising) ctx.fillRect(xOf(i - 1), pad.t, xOf(i) - xOf(i - 1) + 0.5, ph);
+    }
+    ctx.globalAlpha = 1;
+
+    const vals = this.hr.filter(v => v !== null);
+    let lo = 55, hi = 75;
+    if (vals.length) {
+      lo = Math.min(...vals); hi = Math.max(...vals);
+      const mid = (lo + hi) / 2, half = Math.max(6, (hi - lo) / 2 + 2);
+      lo = mid - half; hi = mid + half;
+    }
+    const yOf = (v) => pad.t + ph * (1 - (v - lo) / (hi - lo));
+    ctx.font = FONT; ctx.fillStyle = th.faint; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.strokeStyle = th.line; ctx.lineWidth = 1;
+    for (const v of [Math.ceil(lo + 1), Math.floor(hi - 1)]) {
+      const y = Math.round(yOf(v)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+      ctx.fillText(String(v), pad.l - 4, y);
+    }
+    if (!vals.length) {
+      ctx.textAlign = 'center'; ctx.fillStyle = th.muted;
+      ctx.fillText('waiting for a pulse', pad.l + pw / 2, pad.t + ph / 2);
+      return;
+    }
+    ctx.beginPath();
+    let drawing = false;
+    for (let i = 0; i < n; i++) {
+      const v = this.hr[i];
+      if (v === null) { drawing = false; continue; }
+      drawing ? ctx.lineTo(xOf(i), yOf(v)) : ctx.moveTo(xOf(i), yOf(v));
+      drawing = true;
+    }
+    ctx.strokeStyle = th.bad; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+
+    if (this.hoverX !== null && n > 1) {
+      const i = Math.round(((this.hoverX - pad.l) / pw) * (this.capacity - 1)) - (this.capacity - n);
+      if (i >= 0 && i < n && this.hr[i] !== null) {
+        this.crosshair(xOf(i), pad.t, pad.t + ph);
+        this.showTip(xOf(i), `<b>−${((n - 1 - i) * this.step).toFixed(0)} s</b> ${this.hr[i].toFixed(1)} bpm`);
+      }
+    }
   }
 }

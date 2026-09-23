@@ -6,13 +6,14 @@
 import { hrSeries, lockIn, coherence, coverage, HRV_FS } from './heart.js';
 
 export const RESONANCE_RATES = [7, 6.5, 6, 5.5, 5, 4.5];
-export const DEFAULT_BREATH = { pacer: false, rate: 6, inhale: 0.4, resonance: null };
+export const DEFAULT_BREATH = { pacer: false, byPreset: false, rate: 6, inhale: 0.4, resonance: null };
 
 export function normalizeBreath(b = {}) {
   const rate = Number(b.rate);
   const r = b.resonance;
   return {
     pacer: !!b.pacer,
+    byPreset: !!b.pacer && !!b.byPreset, // a preset switched it on, so leaving that preset switches it off
     rate: Number.isFinite(rate) ? Math.round(Math.max(3, Math.min(10, rate)) * 10) / 10 : DEFAULT_BREATH.rate,
     inhale: b.inhale === 0.5 ? 0.5 : 0.4,
     resonance: r && Number.isFinite(r.rate) && Array.isArray(r.results) ? r : null

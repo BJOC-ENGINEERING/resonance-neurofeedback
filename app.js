@@ -61,6 +61,8 @@ const settings = {
   study: normalizeStudy(saved.study),
   welcomed: !!saved.welcomed
 };
+// Before byPreset existed, a breathing preset left the pacer on for every later protocol. Clear that leftover once.
+if (saved.breath && saved.breath.byPreset === undefined && settings.breath.pacer && !needsHeart(settings.protocol)) settings.breath.pacer = false;
 const persist = () => saveSettings(settings);
 
 let library = loadLibrary();
@@ -261,7 +263,8 @@ function stepPacer(dt) {
 
 function updateHeart() {
   const streaming = heartStreaming();
-  $('heartCard').hidden = !streaming && pulse.state === 'off';
+  // The Heart card belongs to heart protocols and paced breathing; EEG-only sessions don't need it.
+  $('heartCard').hidden = (!streaming && pulse.state === 'off') || !(needsHeart(settings.protocol) || pacerOn());
   pacerTrail.push(pacerLevel);
   const breath = pacerTrail.length > HEART_CHART_DELAY ? pacerTrail.shift() : null;
   heartChart.push(pulse.state === 'ok' ? heart.hrAt(heart.time - HEART_CHART_DELAY * ANALYSIS_DT) : null, breath);
@@ -386,7 +389,7 @@ function renderBreath() {
 
 function initBreathPanel() {
   const b = settings.breath;
-  $('pacerOn').addEventListener('change', e => { b.pacer = e.target.checked; if (b.pacer) { pacer.reset(); $('pacerText').textContent = 'in'; audio.init(); audio.resume(); applySound(); } persist(); renderBreath(); });
+  $('pacerOn').addEventListener('change', e => { b.pacer = e.target.checked; b.byPreset = false; if (b.pacer) { pacer.reset(); $('pacerText').textContent = 'in'; audio.init(); audio.resume(); applySound(); } persist(); renderBreath(); });
   $('pacerRate').addEventListener('input', e => { b.rate = Number(e.target.value); persist(); renderBreath(); });
   seg('pacerInhale', b.inhale, v => { b.inhale = Number(v); persist(); renderBreath(); });
   seg('assessLength', settings.assessSec, v => { settings.assessSec = Number(v); persist(); });
@@ -856,8 +859,15 @@ function rulesFromDom(changed, mode, threshold) {
 function applyPreset(preset) {
   commitProtocol({ presetId: preset.id, name: preset.name, rules: preset.rules.map(r => ({ ...r })), holdSec: preset.holdSec }, { fromPreset: true });
   if (preset.id === 'balance' && !(settings.sensors.includes('AF7') && settings.sensors.includes('AF8'))) toast('Balance reads AF7 and AF8 regardless of the training sites.');
+  if (!preset.pacer && settings.breath.byPreset) {
+    settings.breath.pacer = false;
+    settings.breath.byPreset = false;
+    persist();
+    renderBreath();
+  }
   if (preset.pacer && !settings.breath.pacer) {
     settings.breath.pacer = true;
+    settings.breath.byPreset = true;
     pacer.reset();
     persist();
     renderBreath();

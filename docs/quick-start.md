@@ -57,7 +57,7 @@ Muse 2 and Muse S read your pulse through a light sensor on the forehead. The **
 2. Breathe with the ring on the stage: in as it widens, out as it narrows. It steps from 7 down to 4.5 breaths a minute. Sit upright, breathe gently through your nose and don't force it.
 3. Each rate is scored by how far your heart rate swings with each breath. The widest swing is your resonance rate, and the pacer switches to it.
 
-To train, pick the **Breath coherence** preset (heart coherence only) or **Heart & mind** (coherence plus alpha). Both turn the pacer on. Coherence is absolute, not a share of baseline, and it needs about 30 seconds of clean pulse before it reads. You can also switch the pacer on under **Breath** for any protocol.
+To train, pick the **Breath coherence** preset (heart coherence only) or **Heart & mind** (coherence plus alpha). Both turn the pacer on, and picking a preset without heart coherence turns it off again. Coherence is absolute, not a share of baseline, and it needs about 30 seconds of clean pulse before it reads. You can also switch the pacer on under **Breath** for any protocol; it then stays on until you switch it off. The **Heart** card shows only with heart protocols or the pacer.
 
 The original Muse (2016) has no pulse sensor. Protocols with heart coherence need a Muse 2, a Muse S, or the simulator.
 

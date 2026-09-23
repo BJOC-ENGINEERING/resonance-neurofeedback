@@ -7,6 +7,8 @@ import { ProtocolEngine, computeFeatures, normalizeProtocol, describeProtocol, M
 import { SessionClock, normalizeTimer, describeTimer, formatClock, TIMER_PRESETS, DEFAULT_TIMER } from './src/session.js';
 import { SimulatedEEG, SIM_STATES } from './src/sim.js';
 import { FlockCanvas } from './src/flock.js';
+import { StageBackdrop } from './src/backdrop.js';
+import { VideoScene } from './src/scene-video.js';
 import { AudioEngine } from './src/audio.js';
 import { SessionJournal } from './src/journal.js';
 import { SpectrumChart, Spectrogram, TraceChart, StripChart, TrendChart, chartTheme, refreshChartTheme } from './src/charts.js';
@@ -42,6 +44,8 @@ const settings = {
   flock: { variant: 'classic', count: 72, ...saved.flock },
   milestoneSec: saved.milestoneSec || 5,
   scope: { view: 'spectrum', scale: 'linear', ...saved.scope },
+  scene: { mode: 'flock', floor: 0.25, youtube: '', ...saved.scene },
+  focus: saved.focus ?? true,
   welcomed: !!saved.welcomed
 };
 const persist = () => saveSettings(settings);
@@ -61,7 +65,7 @@ const sim = new SimulatedEEG({ seed: (Date.now() & 0xffff) + 1 });
 const audio = new AudioEngine();
 const journal = new SessionJournal();
 
-let flock, spectrumChart, spectrogram, traceChart, stripChart, summaryChart, trendChart;
+let flock, backdrop, videoScene, spectrumChart, spectrogram, traceChart, stripChart, summaryChart, trendChart;
 let result = null;        // latest engine evaluation
 let features = null;
 let signal = 'none';      // 'ok' | 'artifact' | 'bad' | 'none'
@@ -69,6 +73,7 @@ let artifactUntil = 0;
 let muted = false;
 let openSessionId = null;
 let pendingStart = false; // start requested before the first analysis window filled
+let showPanels = false;   // user reopened the rails during a focused session
 const stats = { usable: 0, rewardSec: 0, streak: 0, bestStreak: 0, score: 0, milestones: 0 };
 
 // ==========================================
@@ -132,8 +137,12 @@ function analyse(now) {
   const rewarded = result.reward && (clock.training || clock.phase === 'idle');
   if (wasTraining && clock.training && contact) accumulate(rewarded);
 
-  flock.setReward(rewarded, 0.25 + result.index * 0.75, clock.phase === 'calibrating' ? 0 : result.holdProgress);
-  flock.setDimmed(clock.phase === 'break' || clock.paused || clock.phase === 'calibrating' || !contact);
+  const hold = clock.phase === 'calibrating' ? 0 : result.holdProgress;
+  const dimmed = clock.phase === 'break' || clock.paused || clock.phase === 'calibrating' || !contact;
+  flock.setReward(rewarded, 0.25 + result.index * 0.75, hold);
+  flock.setDimmed(dimmed);
+  backdrop.set({ energy: rewarded ? 0.55 + result.index * 0.45 : hold * 0.25, hold, dimmed });
+  updateVideoScene(rewarded, hold, contact);
   audio.update(result.index, clock.training, rewarded && clock.training);
   stripChart.push(result.index, rewarded);
   spectrogram.push(features?.spectrum, ANALYSIS_DT);
@@ -152,6 +161,7 @@ function accumulate(rewarded) {
     if (marks > stats.milestones) {
       stats.milestones = marks;
       flock.flourish();
+      backdrop.pulse();
       audio.playMilestone();
       journal.addEvent('milestone', { rewardedSeconds: marks * settings.milestoneSec });
     }
@@ -318,6 +328,9 @@ function renderLive(rewarded) {
   $('statStreak').textContent = `${stats.bestStreak.toFixed(1)}s`;
   $('statEarned').textContent = formatClock(Math.floor(stats.rewardSec));
   $('statScore').textContent = Math.round(stats.score);
+  $('hudZone').textContent = $('statZone').textContent;
+  $('hudStreak').textContent = $('statStreak').textContent;
+  $('hudScore').textContent = $('statScore').textContent;
   const marks = $('milestoneMarks');
   const shown = Math.min(stats.milestones, 12);
   if (marks.dataset.n !== String(stats.milestones)) {
@@ -381,6 +394,92 @@ function renderControls() {
   $('btnRecalibrate').hidden = !active;
   document.querySelectorAll('[data-panel="timing"] input, [data-panel="timing"] select, #timerPresets button, #sourceMode button')
     .forEach(el => { el.disabled = active; });
+  renderFocus();
+}
+
+// Focus mode: while a session runs, the rails fold away unless the viewer asks for them.
+function renderFocus() {
+  const running = clock.active && !clock.paused;
+  if (!clock.active) showPanels = false;
+  document.body.classList.toggle('focus', settings.focus && running && !showPanels);
+  const btn = $('btnPanels');
+  btn.hidden = !(settings.focus && running);
+  btn.setAttribute('aria-pressed', String(showPanels));
+  $('panelsText').textContent = showPanels ? 'Hide panels' : 'Show panels';
+  btn.querySelector('i').className = `ti ti-layout-sidebar-left-${showPanels ? 'collapse' : 'expand'}`;
+}
+
+function togglePanels() {
+  if (!(settings.focus && clock.active && !clock.paused)) return;
+  showPanels = !showPanels;
+  renderFocus();
+}
+
+// ==========================================
+// 4b. SCENES
+// ==========================================
+
+function updateVideoScene(rewarded, hold, contact) {
+  if (settings.scene.mode !== 'video' || !videoScene.loaded) return;
+  const phase = clock.phase;
+  // Baseline and breaks are neutral: the picture stays mostly clear and carries no reward information.
+  const level = !contact ? 0.2
+    : phase === 'calibrating' || phase === 'break' ? 0.85
+    : rewarded ? 1 : 0.55 * hold;
+  videoScene.setLevel(level);
+  videoScene.setPlaying(!clock.paused);
+}
+
+function applyScene() {
+  const mode = settings.scene.mode;
+  $('stage').dataset.scene = mode;
+  $('videoPanel').hidden = mode !== 'video';
+  $('flockOptions').hidden = mode !== 'flock';
+  $('stageCanvas').setAttribute('aria-hidden', String(mode !== 'flock'));
+  if (mode === 'video' && !videoScene.loaded && settings.scene.youtube) videoScene.loadYouTube(settings.scene.youtube);
+  if (mode !== 'video') videoScene.setPlaying(false);
+}
+
+function initScenePanel() {
+  videoScene = new VideoScene($('sceneVideo'));
+  videoScene.setFloor(settings.scene.floor);
+  seg('sceneMode', settings.scene.mode, v => { settings.scene.mode = v; applyScene(); persist(); });
+  $('videoUrl').value = settings.scene.youtube;
+  const loadUrl = () => {
+    const url = $('videoUrl').value.trim();
+    if (!url) return toast('Paste a YouTube link first.', true);
+    if (!videoScene.loadYouTube(url)) return toast('That does not look like a YouTube link.', true);
+    settings.scene.youtube = url;
+    $('videoFileText').textContent = 'Choose a video file';
+    persist();
+  };
+  $('btnLoadVideo').addEventListener('click', loadUrl);
+  $('videoUrl').addEventListener('keydown', e => { if (e.key === 'Enter') loadUrl(); });
+  $('videoFile').addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    $('videoFileText').textContent = videoScene.loadFile(file);
+    e.target.value = '';
+  });
+  $('btnClearVideo').addEventListener('click', () => {
+    videoScene.clear();
+    settings.scene.youtube = '';
+    $('videoUrl').value = '';
+    $('videoFileText').textContent = 'Choose a video file';
+    persist();
+  });
+  const floorLabel = () => { $('videoFloorLabel').textContent = `${Math.round(settings.scene.floor * 100)}%`; };
+  $('videoFloor').value = Math.round(settings.scene.floor * 100);
+  floorLabel();
+  $('videoFloor').addEventListener('input', e => {
+    settings.scene.floor = Number(e.target.value) / 100;
+    videoScene.setFloor(settings.scene.floor);
+    floorLabel();
+    persist();
+  });
+  $('focusMode').checked = settings.focus;
+  $('focusMode').addEventListener('change', e => { settings.focus = e.target.checked; renderFocus(); persist(); });
+  applyScene();
 }
 
 // ==========================================
@@ -576,7 +675,8 @@ function applyPalette() {
   document.body.dataset.palette = settings.palette;
   refreshChartTheme();
   const th = chartTheme();
-  flock?.setPalette({ hue: th.hue, light: th.light });
+  flock?.setPalette({ hue: th.hue, light: false }); // the stage is dark on every palette
+  backdrop?.setHue(th.hue);
   document.querySelector('meta[name="theme-color"]').content = getComputedStyle(document.body).getPropertyValue('--bg').trim();
   document.querySelectorAll('#palettes button').forEach(b => b.classList.toggle('active', b.dataset.color === settings.palette));
   spectrogram?.clear();
@@ -931,8 +1031,11 @@ function initMCP() {
 function init() {
   document.body.dataset.palette = settings.palette;
   const th = chartTheme();
-  flock = new FlockCanvas($('stageCanvas'), { count: settings.flock.count, variant: settings.flock.variant, hue: th.hue, light: th.light });
+  flock = new FlockCanvas($('stageCanvas'), { count: settings.flock.count, variant: settings.flock.variant, hue: th.hue, light: false });
   flock.start();
+  backdrop = new StageBackdrop($('backdropCanvas'), { getFocus: () => flock.centroid() });
+  backdrop.setHue(th.hue);
+  backdrop.start();
 
   initScope();
   document.querySelector('.tabs').addEventListener('click', e => {
@@ -946,6 +1049,7 @@ function init() {
   initProtocolPanel();
   initTimingPanel();
   initFeedbackPanel();
+  initScenePanel();
   initSignalPanel();
   initModals();
   initMCP();
@@ -961,6 +1065,7 @@ function init() {
   $('btnFinish').addEventListener('click', finishEarly);
   $('btnRecalibrate').addEventListener('click', recalibrate);
   $('btnMute').addEventListener('click', () => { muted = !muted; applySound(); });
+  $('btnPanels').addEventListener('click', togglePanels);
   const renderFullscreen = () => {
     const active = document.fullscreenElement === $('stage');
     const btn = $('btnFullscreen');
@@ -990,6 +1095,7 @@ function init() {
     if (e.code === 'Space') { if (e.target.closest('button')) return; e.preventDefault(); togglePause(); }
     else if (e.key === 'f') fullscreen();
     else if (e.key === 'm') { muted = !muted; applySound(); }
+    else if (e.key === 'p') togglePanels();
   });
 
   requestAnimationFrame(frame);
@@ -998,6 +1104,7 @@ function init() {
   if (import.meta.env?.DEV) {
     window.__resonance = {
       flock,
+      backdrop,
       advance(seconds) { for (let i = 0; i < seconds * 60; i++) step(lastFrame + 1000 / 60); },
       snapshot: () => ({ phase: clock.phase, block: clock.block, paused: clock.paused, signal, calibrated: engine.calibrated, reward: result?.reward, stats: { ...stats }, rows: result?.rows.map(r => ({ m: r.measure, pct: r.pct, target: r.target, pass: r.pass })) })
     };

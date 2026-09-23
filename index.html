@@ -108,6 +108,28 @@
     </section>
 
     <section class="tabpanel" data-panel="feedback">
+      <h2>Scene</h2>
+      <div class="seg" id="sceneMode">
+        <button data-v="flock" class="active">Flock</button>
+        <button data-v="video">Video</button>
+      </div>
+      <div id="videoPanel" hidden>
+        <div class="row field">
+          <input type="text" id="videoUrl" placeholder="Paste a YouTube link" aria-label="YouTube link">
+          <button class="btn" id="btnLoadVideo">Load</button>
+        </div>
+        <div class="row field">
+          <label class="btn ghost grow file-pick"><i class="ti ti-upload" aria-hidden="true"></i><span id="videoFileText">Choose a video file</span><input type="file" id="videoFile" accept="video/*" hidden></label>
+          <button class="btn ghost icon" id="btnClearVideo" aria-label="Remove video" title="Remove video"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </div>
+        <div class="field">
+          <label><span>Brightness off target</span><b id="videoFloorLabel">25%</b></label>
+          <input type="range" id="videoFloor" min="5" max="80" step="5" value="25">
+        </div>
+        <p class="note">The picture and its sound fade when you drift off target and return as you hold it. Local files play from this device and are never uploaded.</p>
+      </div>
+      <label class="check field"><input type="checkbox" id="focusMode" checked>Hide side panels while training</label>
+
       <h2>Sound</h2>
       <div class="seg" id="soundMode">
         <button data-v="chime" class="active">Chime</button>
@@ -128,6 +150,7 @@
         <button class="btn ghost" id="btnTestSound">Test</button>
       </div>
 
+      <div id="flockOptions">
       <h2>Flock</h2>
       <div class="seg" id="flockVariant">
         <button data-v="classic" class="active">Classic</button>
@@ -140,6 +163,7 @@
       <div class="field">
         <label for="milestoneSec"><span>Milestone every</span></label>
         <select id="milestoneSec"><option value="5">5 s rewarded</option><option value="10">10 s rewarded</option><option value="20">20 s rewarded</option></select>
+      </div>
       </div>
 
       <h2>Palette</h2>
@@ -202,13 +226,26 @@
 
   <!-- Stage -->
   <section class="center">
-    <div class="stage" id="stage">
+    <div class="stage" id="stage" data-scene="flock">
+      <canvas id="backdropCanvas" class="backdrop" aria-hidden="true"></canvas>
       <canvas id="stageCanvas" aria-label="Flock visualisation"></canvas>
+      <div class="scene-video" id="sceneVideo">
+        <video playsinline loop hidden></video>
+        <div class="scene-empty">
+          <i class="ti ti-movie" aria-hidden="true"></i>
+          <p>Pick a video in <b>Feedback → Scene</b>. It dims and blurs when you drift off target and clears as you hold it.</p>
+        </div>
+      </div>
 
       <div class="stage-top">
         <div class="clock">
           <div class="time" id="clockTime">3:00</div>
           <div class="phase" id="clockPhase">Ready</div>
+          <div class="hud" id="hud" aria-live="off">
+            <span><b id="hudZone">0%</b>in zone</span>
+            <span><b id="hudStreak">0.0s</b>best streak</span>
+            <span><b id="hudScore">0</b>score</span>
+          </div>
         </div>
         <div class="blocks" id="blockDots" aria-hidden="true"></div>
         <button class="btn ghost" id="btnFullscreen" aria-label="Enter fullscreen" title="Fullscreen (F)"><i class="ti ti-maximize" aria-hidden="true"></i><span id="fullscreenHint">Try fullscreen</span></button>
@@ -237,8 +274,9 @@
       <button class="btn" id="btnFinish" hidden><i class="ti ti-flag"></i>Finish</button>
       <button class="btn ghost" id="btnRecalibrate" hidden><i class="ti ti-refresh"></i>New baseline</button>
       <span class="spacer"></span>
+      <button class="btn ghost" id="btnPanels" hidden aria-pressed="false" title="Show or hide the side panels (P)"><i class="ti ti-layout-sidebar-left-expand" aria-hidden="true"></i><span id="panelsText">Show panels</span></button>
       <button class="btn ghost" id="btnMute" aria-pressed="false"><i class="ti ti-volume"></i><span id="muteText">Sound on</span></button>
-      <span class="keys"><kbd>Space</kbd> start / pause &middot; <kbd>F</kbd> fullscreen &middot; <kbd>M</kbd> mute</span>
+      <span class="keys"><kbd>Space</kbd> start / pause &middot; <kbd>F</kbd> fullscreen &middot; <kbd>M</kbd> mute &middot; <kbd>P</kbd> panels</span>
     </div>
   </section>
 

@@ -13,6 +13,9 @@ User guide: [Quick start](docs/quick-start.md) — connect a Muse, start a sessi
 - Measures: delta, theta, alpha, beta, gamma, theta/beta, alpha/theta, alpha peak frequency, frontal alpha R/L, and the 7.63 / 19.99 / 32.57 Hz resonance triad
 - Seven starting protocols, plus a local library of up to 24 saved setups
 - Hold training (0 to 10 s) with a progress ring; the flock gathers while you hold
+- Night-sky stage: a WebGL aurora brightens and widens with reward, light follows the flock while you hold, and the birds glow and trail when rewarded
+- Video scene: play a YouTube link or a local video file that dims, blurs and quietens off target and clears as you hold it. Files never leave the device
+- Focus mode: the side panels fold away while a session runs, with a compact score readout on the stage. Press P to bring them back
 - Manual thresholds or auto difficulty that steers toward a target reward rate
 - Timed blocks and breaks. The clock counts usable signal only
 - Per-sensor quality (blink, motion, muscle, contact). Artifacts never count toward reward or baseline
@@ -79,7 +82,7 @@ Muse EEG ──────┘        -> measures -> rules vs baseline -> hold -
 - `src/protocol.js` measures, presets, baseline, rules, hold, auto difficulty.
 - `src/session.js` calibration, blocks and breaks on usable time.
 - `src/sim.js` seeded synthetic EEG and artifacts.
-- `src/flock.js`, `src/audio.js`, `src/charts.js` feedback and instruments.
+- `src/flock.js`, `src/backdrop.js`, `src/scene-video.js`, `src/audio.js`, `src/charts.js` feedback scenes and instruments.
 - `src/journal.js`, `src/store.js` local persistence. `src/mcp.js` WebMCP tools.
 - `mockups/landing-v2.html` is the earlier marketing-page mock, kept for reference.
 

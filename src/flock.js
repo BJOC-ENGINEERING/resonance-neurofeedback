@@ -1,5 +1,5 @@
 // Canvas boids (Craig Reynolds) driven by the reward state.
-// Out of zone: grey, loose, slow. Holding: the flock gathers. Rewarded: colour, trails, speed.
+// Out of zone: grey, loose, slow. Holding: the flock gathers. Rewarded: colour, glow, trails, speed.
 
 const REDUCED_MOTION = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -23,6 +23,8 @@ export class FlockCanvas {
     this.width = 800;
     this.height = 400;
     this.mouse = { x: 0, y: 0, active: false };
+
+    this.glow = null;
 
     this.fit();
     this.setCount(options.count || 64);
@@ -75,7 +77,32 @@ export class FlockCanvas {
 
   setDimmed(dimmed) { this.dimmed = dimmed; }
   setVariant(variant) { this.variant = variant; }
-  setPalette({ hue, light }) { this.hue = hue; this.light = light; }
+  setPalette({ hue, light }) { this.hue = hue; this.light = light; this.glow = null; }
+
+  // Centre of the flock in CSS pixels, with the stage size, for lighting that follows it.
+  centroid() {
+    if (!this.boids.length) return null;
+    let x = 0, y = 0;
+    for (const b of this.boids) { x += b.x; y += b.y; }
+    return { x: x / this.boids.length, y: y / this.boids.length, w: this.width, h: this.height };
+  }
+
+  // Soft radial sprite in the palette hue, drawn additively under each bird when rewarded.
+  glowSprite() {
+    if (this.glow) return this.glow;
+    const size = 64;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, `hsla(${this.hue}, 90%, 70%, 0.9)`);
+    grad.addColorStop(0.35, `hsla(${this.hue}, 90%, 60%, 0.25)`);
+    grad.addColorStop(1, `hsla(${this.hue}, 90%, 55%, 0)`);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    this.glow = c;
+    return c;
+  }
 
   // Milestone accent: a brief outward burst.
   flourish() {
@@ -101,8 +128,10 @@ export class FlockCanvas {
       if (!this.running) return;
       const dt = Math.min((now - last) / 1000, 0.1);
       last = now;
-      this.update(dt);
-      this.render();
+      if (this.canvas.offsetParent !== null) { // skip while another scene hides the stage canvas
+        this.update(dt);
+        this.render();
+      }
       this.animId = requestAnimationFrame(loop);
     };
     this.animId = requestAnimationFrame(loop);
@@ -125,7 +154,7 @@ export class FlockCanvas {
     const minDistance = 26 - this.gather * 6;
     const cohesion = 0.0025 + this.gather * 0.012;
     const cx = this.width / 2, cy = this.height / 2;
-    const trailLength = this.variant === 'retro' ? 6 : 14;
+    const trailLength = this.variant === 'retro' ? 6 : 12 + Math.round(this.drive * 10);
 
     for (let i = 0; i < this.boids.length; i++) {
       const b1 = this.boids[i];
@@ -207,11 +236,13 @@ export class FlockCanvas {
     ctx.clearRect(0, 0, this.width, this.height);
     const t = this.colorTransition;
     const isRetro = this.variant === 'retro';
-    const lightness = this.light ? 38 : 66;
-    const greyL = this.light ? 62 : 48;
+    const lightness = this.light ? 38 : 68;
+    const greyL = this.light ? 62 : 56;
     const fade = this.dimmed ? 0.45 : 1;
 
     if (t > 0.05) {
+      // Additive light only reads on a dark stage.
+      if (!this.light) ctx.globalCompositeOperation = 'lighter';
       ctx.lineWidth = isRetro ? 2 : 1.5;
       ctx.lineCap = 'round';
       for (const b of this.boids) {
@@ -219,9 +250,19 @@ export class FlockCanvas {
         ctx.beginPath();
         ctx.moveTo(b.trail[0], b.trail[1]);
         for (let i = 2; i < b.trail.length; i += 2) ctx.lineTo(b.trail[i], b.trail[i + 1]);
-        ctx.strokeStyle = `hsla(${this.hue + b.tint}, 80%, ${lightness}%, ${(t * 0.32).toFixed(2)})`;
+        ctx.strokeStyle = `hsla(${this.hue + b.tint}, 80%, ${lightness}%, ${(t * 0.4 * fade).toFixed(2)})`;
         ctx.stroke();
       }
+      if (!this.light && !isRetro) {
+        const sprite = this.glowSprite();
+        ctx.globalAlpha = t * 0.42 * fade;
+        for (const b of this.boids) {
+          const s = b.size * (7 + this.flourishT * 5);
+          ctx.drawImage(sprite, b.x - s / 2, b.y - s / 2, s, s);
+        }
+        ctx.globalAlpha = 1;
+      }
+      ctx.globalCompositeOperation = 'source-over';
     }
 
     ctx.globalAlpha = fade;

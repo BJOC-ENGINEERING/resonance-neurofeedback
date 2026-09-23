@@ -2,6 +2,7 @@ import { MuseClient } from 'muse-js';
 import { marked } from 'marked';
 import readme from './README.md?raw';
 import quickStart from './docs/quick-start.md?raw';
+import featureList from './docs/features.md?raw';
 import { FS, CHANNELS, CHANNEL_INFO, WINDOW, BANDS, psd, peakFrequency, Channel, assessQuality, DEFAULT_QUALITY_LIMITS, personalBands, estimateAlphaPeak } from './src/dsp.js';
 import { ProtocolEngine, computeFeatures, compositeSpectrum, normalizeProtocol, describeProtocol, needsEeg, needsHeart, MEASURES, MEASURE_BY_KEY, PRESETS, DEFAULT_PROTOCOL } from './src/protocol.js';
 import { SessionClock, normalizeTimer, describeTimer, formatClock, TIMER_PRESETS, DEFAULT_TIMER } from './src/session.js';
@@ -1349,7 +1350,7 @@ function initModals() {
   $('btnJournal').addEventListener('click', openJournal);
   $('btnHelp').addEventListener('click', () => showModal('helpModal'));
   const renderDocs = (page) => {
-    $('docsContent').innerHTML = marked.parse(page === 'guide' ? quickStart : readme);
+    $('docsContent').innerHTML = marked.parse(page === 'guide' ? quickStart : page === 'features' ? featureList : readme);
     $('docsContent').scrollTop = 0;
     document.querySelectorAll('#docsPages button').forEach(btn => {
       const active = btn.dataset.page === page;
@@ -1357,8 +1358,9 @@ function initModals() {
       btn.setAttribute('aria-pressed', String(active));
     });
     $('docsContent').querySelectorAll('a').forEach(link => {
-      if (link.getAttribute('href') === 'docs/quick-start.md') {
-        link.addEventListener('click', e => { e.preventDefault(); renderDocs('guide'); });
+      const internal = { 'docs/quick-start.md': 'guide', 'docs/features.md': 'features' }[link.getAttribute('href')];
+      if (internal) {
+        link.addEventListener('click', e => { e.preventDefault(); renderDocs(internal); });
       } else {
         link.target = '_blank';
         link.rel = 'noopener noreferrer';

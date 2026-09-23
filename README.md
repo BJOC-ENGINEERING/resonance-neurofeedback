@@ -6,6 +6,8 @@ Live app: [resonance-neurofeedback.vercel.app](https://resonance-neurofeedback.v
 
 User guide: [Quick start](docs/quick-start.md) — connect a Muse, start a session, and troubleshoot signal issues.
 
+Full feature list: [Features](docs/features.md).
+
 ## Features
 
 - Guided flow: connect, check signal, record a baseline, train

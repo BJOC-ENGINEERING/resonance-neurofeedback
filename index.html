@@ -64,7 +64,7 @@
       <h3 id="tuningHeading" tabindex="-1">Make it your own</h3>
       <h2>Hold <span class="hint" id="holdLabel">instant reward</span></h2>
       <input type="range" id="holdSec" min="0" max="10" step="0.5" value="0" aria-label="Hold seconds">
-      <p class="note">Every rule must stay in target this long before reward begins. The flock gathers while you hold.</p>
+      <p class="note">Rules hold this long first. <a class="more" href="#" data-doc="features#protocols">Learn more</a></p>
 
       <h2>Difficulty</h2>
       <div class="seg" id="difficultyMode">
@@ -74,7 +74,7 @@
       <div class="field" id="rateField" hidden>
         <label><span>Target time rewarded</span><b id="rateLabel">65%</b></label>
         <input type="range" id="rewardRate" min="30" max="90" step="5" value="65">
-        <p class="note">Thresholds follow your last 30 seconds so reward lands near this rate as you improve.</p>
+        <p class="note">Adapts to your last 30 s. <a class="more" href="#" data-doc="features#protocols">Learn more</a></p>
       </div>
       </section>
 
@@ -105,11 +105,11 @@
         </div>
       </div>
       <p class="summary" id="timerSummary"></p>
-      <p class="note">The clock counts usable signal only. Pauses, lost contact and hidden tabs stop it; breaks mute feedback. The demo uses a 6 second baseline.</p>
+      <p class="note">The clock counts usable signal only. <a class="more" href="#" data-doc="features#sessions">Learn more</a></p>
 
       <h2>Self-experiment</h2>
       <label class="check field"><input type="checkbox" id="studyCheckin">Check in before and after each session</label>
-      <p class="note">Two 1–7 ratings (calm, alert) and a 60 second reaction test, before the baseline and after the last block.</p>
+      <p class="note">Two ratings and a 60 s reaction test. <a class="more" href="#" data-doc="guide#test-whether-it-works-for-you">Learn more</a></p>
       <div class="field">
         <label><span>Blinded sham sessions</span></label>
         <div class="seg" id="studySham">
@@ -118,7 +118,7 @@
           <button data-v="half">1 in 2</button>
         </div>
       </div>
-      <p class="note">A sham session looks and sounds like any other, but its feedback replays your usual reward pattern instead of following your signal. You find out which it was only after the session. <b>Journal</b> compares the two, so you can see whether the training itself makes a difference for you.</p>
+      <p class="note">Shams replay your reward pattern. <a class="more" href="#" data-doc="guide#test-whether-it-works-for-you">Learn more</a></p>
     </section>
 
     <section class="tabpanel" data-panel="feedback">
@@ -140,7 +140,7 @@
           <label><span>Brightness off target</span><b id="videoFloorLabel">25%</b></label>
           <input type="range" id="videoFloor" min="5" max="80" step="5" value="25">
         </div>
-        <p class="note">The picture and its sound fade when you drift off target and return as you hold it. Local files play from this device and are never uploaded.</p>
+        <p class="note">Dims off target. Files stay local. <a class="more" href="#" data-doc="features#feedback">Learn more</a></p>
       </div>
       <label class="check field"><input type="checkbox" id="focusMode" checked>Hide side panels while training</label>
 
@@ -205,7 +205,7 @@
           <button data-v="0.5">Even</button>
         </div>
       </div>
-      <p class="note">The ring widens as you breathe in and narrows as you breathe out, and the flock breathes with it. A slightly longer out-breath is easier for most people.</p>
+      <p class="note">In as the ring widens, out as it narrows. <a class="more" href="#" data-doc="guide#resonance-breathing">Learn more</a></p>
 
       <h2>Resonance rate</h2>
       <div class="resonance" id="resonanceResult"></div>
@@ -214,10 +214,10 @@
         <button data-v="120">Full · 12 min</button>
       </div>
       <button class="btn primary field wide" id="btnAssess"><i class="ti ti-wave-sine" aria-hidden="true"></i>Find my resonance rate</button>
-      <p class="note">Paces six rates, from 7 down to 4.5 breaths a minute, and measures how far your heart rate rises and falls with each breath. The rate with the widest swing is your resonance rate. Sit upright, breathe gently through your nose and don't force it.</p>
+      <p class="note">Finds your widest heart-rate swing. <a class="more" href="#" data-doc="guide#resonance-breathing">Learn more</a></p>
 
       <h2>Pulse</h2>
-      <p class="note" id="pulseNote">Muse 2 and Muse S read your pulse optically from the forehead. In the simulator a virtual heart follows the pacer, with its own resonance rate.</p>
+      <p class="note"><span id="pulseNote"></span> <a class="more" href="#" data-doc="guide#resonance-breathing">Learn more</a></p>
     </section>
 
     <section class="tabpanel" data-panel="signal">
@@ -233,11 +233,7 @@
           <button class="btn ghost" id="btnDisconnectMuse" hidden><i class="ti ti-plug-off"></i>Disconnect</button>
         </div>
         <p class="summary" id="museInfo">Muse 2 or Muse S over Web Bluetooth.</p>
-        <ol class="note list">
-          <li>Use Chrome or Edge on desktop or Android.</li>
-          <li>Connect from this page; system Bluetooth pairing alone does not stream.</li>
-          <li>Dampen the sensors, seat the band just above the brow, then open <b>Traces</b> and wait for every sensor to read good.</li>
-        </ol>
+        <p class="note">Use Chrome or Edge and pair here. <a class="more" href="#" data-doc="guide#connect-your-muse">Learn more</a></p>
       </div>
 
       <div id="simPanel">
@@ -262,14 +258,14 @@
           <button data-a="mains">50 Hz mains</button>
           <button data-a="loose">Loose AF7</button>
         </div>
-        <p class="note">Pink background noise with rhythms that wax and wane, run through the same filters, spectra and quality checks as a headset.</p>
+        <p class="note">Same checks as a headset. <a class="more" href="#" data-doc="features#signal">Learn more</a></p>
       </div>
 
       <h2>Alpha peak</h2>
       <div class="iaf" id="iafResult"></div>
       <label class="check field"><input type="checkbox" id="useIaf">Anchor bands to my alpha peak</label>
       <button class="btn field wide" id="btnMeasureIaf"><i class="ti ti-eye-closed" aria-hidden="true"></i>Measure · 60 s, eyes closed</button>
-      <p class="note">Your alpha peak sits somewhere between 8 and 12 Hz. With personal bands, the theta, alpha and beta edges move with it, so a 9 Hz alpha is not counted as theta. Changing bands records a new baseline.</p>
+      <p class="note">Bands move with your alpha peak. <a class="more" href="#" data-doc="guide#personal-alpha-bands">Learn more</a></p>
     </section>
   </aside>
 

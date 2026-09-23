@@ -47,14 +47,14 @@ Alpha peaks somewhere between about 8 and 12 Hz, and the standard 8–13 Hz band
 2. Close your eyes, relax your face and stay still. A soft chime marks the end. Movement pauses the clock.
 3. The result shows your peak in Hz. **Anchor bands to my alpha peak** turns on automatically; untick it to go back to standard bands.
 
-Theta, alpha, upper alpha and beta all move with the peak. The spectrum legend shows the edges in use. Changing bands clears the baseline, so start a session to record a new one.
+Theta, alpha, upper alpha and beta all move with the peak. The spectrum legend shows the edges in use. With personal bands a 9 Hz alpha is no longer counted as theta. Changing bands clears the baseline, so start a session to record a new one.
 
 ## Resonance breathing
 
 Muse 2 and Muse S read your pulse through a light sensor on the forehead. The **Heart** card shows heart rate, RMSSD (beat-to-beat variability), coherence, and the dominant rhythm in breaths a minute. Its chart shades each in-breath from the pacer. When your breathing is at resonance, heart rate rises with every shaded span and falls between them.
 
 1. Open **Breath**. Choose **Quick · 6 min** or **Full · 12 min** and click **Find my resonance rate**.
-2. Breathe with the ring on the stage: in as it widens, out as it narrows. It steps from 7 down to 4.5 breaths a minute.
+2. Breathe with the ring on the stage: in as it widens, out as it narrows. It steps from 7 down to 4.5 breaths a minute. Sit upright, breathe gently through your nose and don't force it.
 3. Each rate is scored by how far your heart rate swings with each breath. The widest swing is your resonance rate, and the pacer switches to it.
 
 To train, pick the **Breath coherence** preset (heart coherence only) or **Heart & mind** (coherence plus alpha). Both turn the pacer on. Coherence is absolute, not a share of baseline, and it needs about 30 seconds of clean pulse before it reads. You can also switch the pacer on under **Breath** for any protocol.

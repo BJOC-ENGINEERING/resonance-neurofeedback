@@ -10,7 +10,7 @@ Everything runs in the browser. There is no account, no server and no upload.
 - **Per-sensor quality:** each sensor reads good, fair, artifact (blink, motion or muscle) or bad. Artifacts never count toward reward or baseline, and reward stays off for 1 s after one
 - **Simulator:** synthetic EEG with pink noise, rhythms that wax and wane, and five mental states (calm, focused, deep, restless, drowsy). Intensity, stability and resonance-triad sliders
 - **Artifact injection:** blinks, jaw clench, 50 Hz mains and a loose AF7 contact, all passed through the same quality checks as a headset
-- **Simulated heart:** its rate swings with breathing and peaks at its own resonance rate. It produces a PPG waveform for the real beat detector. **Stability** sets how closely it follows the pacer
+- **Simulated heart:** its rate swings with breathing and peaks at its own resonance rate, between 5 and 6.5 breaths a minute. It produces a PPG waveform for the real beat detector. **Stability** sets how closely it follows the pacer
 
 ## Measures
 
@@ -54,12 +54,12 @@ Everything runs in the browser. There is no account, no server and no upload.
 - **Guided flow:** connect, check signal, record a baseline, train. The steps light up in the top bar
 - **Baseline:** 10, 20, 30 or 60 s (6 s in the demo). You can record a new one mid-session
 - **Timed blocks and breaks:** Quick (1 × 2:00), Standard (3 × 3:00, 20 s breaks) and Long (7 × 4:00, 30 s breaks), or custom lengths up to 20 blocks
-- **Usable time only:** the clock counts usable signal only. Pauses, lost contact and hidden tabs stop it
+- **Usable time only:** the clock counts usable signal only. Pauses, lost contact and hidden tabs stop it, and breaks mute feedback
 - **Live stats:** time in zone, best streak, rewarded time, score, and milestone marks every 5, 10 or 20 s rewarded
 
 ## Breathing
 
-- **Pacer:** a ring on the stage widens as you breathe in and narrows as you breathe out. Rate 3.5–10 breaths a minute, in 4 · out 6 or even
+- **Pacer:** a ring on the stage widens as you breathe in and narrows as you breathe out. Rate 3.5–10 breaths a minute, in 4 · out 6 or even. A slightly longer out-breath is easier for most people
 - **The flock breathes too,** holding a ring that follows the pacer
 - **Resonance-rate assessment:** a Quick (6 min) or Full (12 min) run paces 7, 6.5, 6, 5.5, 5 and 4.5 breaths a minute. It scores each rate by the heart-rate swing locked to the breath, peak to trough, and sets the pacer to the widest one
 - **Heart chart:** the last 60 s of heart rate with in-breaths shaded. At resonance the line rises with each breath and falls between

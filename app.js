@@ -377,9 +377,9 @@ function renderBreath() {
       + '<p class="hint">heart-rate swing per breath, peak to trough</p>';
   }
   $('pulseNote').textContent = source === 'sim'
-    ? 'In the simulator a virtual heart follows the pacer. It has its own resonance rate, between 5 and 6.5 breaths a minute, for the assessment to find.'
-    : museConnected ? (museHasPpg ? 'Pulse streaming from the headset’s forehead sensor.' : 'This headset sends no pulse. Muse 2 and Muse S do.')
-    : 'Muse 2 and Muse S read your pulse optically from the forehead.';
+    ? 'A virtual heart follows the pacer.'
+    : museConnected ? (museHasPpg ? 'Pulse streaming from the headset.' : 'This headset sends no pulse.')
+    : 'Muse 2 and Muse S read your pulse.';
 }
 
 function initBreathPanel() {
@@ -1344,9 +1344,12 @@ function initModals() {
   });
   $('btnJournal').addEventListener('click', openJournal);
   $('btnHelp').addEventListener('click', () => showModal('helpModal'));
-  const renderDocs = (page) => {
+  const slug = text => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const renderDocs = (page, section) => {
     $('docsContent').innerHTML = marked.parse(page === 'guide' ? quickStart : page === 'features' ? featureList : readme);
+    $('docsContent').querySelectorAll('h2, h3').forEach(h => { h.id = `doc-${slug(h.textContent)}`; });
     $('docsContent').scrollTop = 0;
+    if (section) $(`doc-${section}`)?.scrollIntoView({ block: 'start' });
     document.querySelectorAll('#docsPages button').forEach(btn => {
       const active = btn.dataset.page === page;
       btn.classList.toggle('active', active);
@@ -1365,6 +1368,14 @@ function initModals() {
   $('btnDocs').addEventListener('click', () => {
     renderDocs('readme');
     $('docsDialog').showModal();
+  });
+  document.addEventListener('click', e => {
+    const link = e.target.closest('a[data-doc]');
+    if (!link) return;
+    e.preventDefault();
+    const [page, section] = link.dataset.doc.split('#');
+    $('docsDialog').showModal();
+    renderDocs(page, section);
   });
   $('btnCloseDocs').addEventListener('click', () => $('docsDialog').close());
   $('docsPages').addEventListener('click', e => {

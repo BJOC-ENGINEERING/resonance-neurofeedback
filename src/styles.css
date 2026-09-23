@@ -166,6 +166,8 @@ select { appearance: none; }
 .note { color: var(--txt-faint); font-size: 11.5px; margin-top: 8px; }
 .note.list { padding-left: 16px; display: grid; gap: 4px; }
 .note b { color: var(--txt-muted); font-weight: 600; }
+.note a.more { color: var(--txt-muted); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.note a.more:hover { color: var(--accent); }
 .summary { margin-top: 10px; font: 12px var(--font-mono); color: var(--txt-muted); }
 
 /* Layout */

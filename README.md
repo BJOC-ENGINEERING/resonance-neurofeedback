@@ -15,7 +15,7 @@ Full feature list: [Features](docs/features.md).
 - Measures: delta, theta, alpha, upper alpha, beta, gamma, theta/beta, alpha/theta, alpha peak frequency, frontal alpha R/L, the 7.63 / 19.99 / 32.57 Hz resonance triad, and heart coherence
 - Nine starting protocols, plus a local library of up to 24 saved setups
 - Personal alpha bands: a 60 second eyes-closed recording finds your alpha peak (centre of gravity above the 1/f background), and the theta, alpha and beta edges move with it
-- HRV resonance breathing: the Muse's forehead PPG gives beat-to-beat heart rate, RMSSD and coherence. A breathing pacer (ring, flock and optional breath sound) guides you, and a 6 or 12 minute assessment paces 7 down to 4.5 breaths a minute and picks the rate with the widest breath-locked heart-rate swing
+- HRV resonance breathing: the Muse's forehead PPG gives beat-to-beat heart rate, RMSSD and coherence. A breathing pacer (ring and flock) guides you, and a 6 or 12 minute assessment paces 7 down to 4.5 breaths a minute and picks the rate with the widest breath-locked heart-rate swing
 - Breath coherence and Heart & mind protocols: reward a smooth, slow heart rhythm, alone or together with alpha
 - Blinded self-experiment: optional sham sessions (1 in 3 or 1 in 2, in permuted blocks) replay your usual reward pattern instead of following your signal. The rule readout is hidden while blinded; you guess before the reveal
 - Check-ins: calm and alert ratings plus a 60 second reaction-time test (PVT) before and after a session. Journal compares real and sham sessions on rules met, reaction time and ratings

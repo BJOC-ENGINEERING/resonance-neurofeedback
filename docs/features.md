@@ -60,7 +60,7 @@ Everything runs in the browser. There is no account, no server and no upload.
 ## Breathing
 
 - **Pacer:** a ring on the stage widens as you breathe in and narrows as you breathe out. Rate 3.5–10 breaths a minute, in 4 · out 6 or even
-- **The flock breathes too,** holding a ring that follows the pacer. An optional breath sound swells with it
+- **The flock breathes too,** holding a ring that follows the pacer
 - **Resonance-rate assessment:** a Quick (6 min) or Full (12 min) run paces 7, 6.5, 6, 5.5, 5 and 4.5 breaths a minute. It scores each rate by the heart-rate swing locked to the breath, peak to trough, and sets the pacer to the widest one
 - **Heart chart:** the last 60 s of heart rate with in-breaths shaded. At resonance the line rises with each breath and falls between
 

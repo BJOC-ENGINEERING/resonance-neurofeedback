@@ -6,7 +6,7 @@
 import { hrSeries, lockIn, coherence, coverage, HRV_FS } from './heart.js';
 
 export const RESONANCE_RATES = [7, 6.5, 6, 5.5, 5, 4.5];
-export const DEFAULT_BREATH = { pacer: false, rate: 6, inhale: 0.4, sound: true, resonance: null };
+export const DEFAULT_BREATH = { pacer: false, rate: 6, inhale: 0.4, resonance: null };
 
 export function normalizeBreath(b = {}) {
   const rate = Number(b.rate);
@@ -15,7 +15,6 @@ export function normalizeBreath(b = {}) {
     pacer: !!b.pacer,
     rate: Number.isFinite(rate) ? Math.round(Math.max(3, Math.min(10, rate)) * 10) / 10 : DEFAULT_BREATH.rate,
     inhale: b.inhale === 0.5 ? 0.5 : 0.4,
-    sound: b.sound ?? true,
     resonance: r && Number.isFinite(r.rate) && Array.isArray(r.results) ? r : null
   };
 }

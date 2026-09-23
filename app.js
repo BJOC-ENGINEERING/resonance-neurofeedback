@@ -245,7 +245,6 @@ function stepPacer(dt) {
       pacerLevel = null;
       el.hidden = true;
       flock.setBreath(null);
-      audio.setBreath(null);
     }
     return;
   }
@@ -264,7 +263,6 @@ function updateHeart() {
   pacerTrail.push(pacerLevel);
   const breath = pacerTrail.length > HEART_CHART_DELAY ? pacerTrail.shift() : null;
   heartChart.push(pulse.state === 'ok' ? heart.hrAt(heart.time - HEART_CHART_DELAY * ANALYSIS_DT) : null, breath);
-  audio.setBreath(pacerLevel !== null && settings.breath.sound ? pacerLevel : null);
 }
 
 function renderHeart() {
@@ -366,7 +364,6 @@ function renderBreath() {
   $('pacerOn').checked = b.pacer;
   $('pacerRate').value = b.rate;
   $('pacerRateLabel').textContent = `${b.rate.toFixed(1)} / min`;
-  $('pacerSound').checked = b.sound;
   document.querySelectorAll('#pacerInhale button').forEach(x => x.classList.toggle('active', Number(x.dataset.v) === b.inhale));
   document.querySelectorAll('#assessLength button').forEach(x => x.classList.toggle('active', Number(x.dataset.v) === settings.assessSec));
   if (!procedure) pacer.set(b);
@@ -389,7 +386,6 @@ function initBreathPanel() {
   const b = settings.breath;
   $('pacerOn').addEventListener('change', e => { b.pacer = e.target.checked; if (b.pacer) { pacer.reset(); $('pacerText').textContent = 'in'; audio.init(); audio.resume(); applySound(); } persist(); renderBreath(); });
   $('pacerRate').addEventListener('input', e => { b.rate = Number(e.target.value); persist(); renderBreath(); });
-  $('pacerSound').addEventListener('change', e => { b.sound = e.target.checked; persist(); });
   seg('pacerInhale', b.inhale, v => { b.inhale = Number(v); persist(); renderBreath(); });
   seg('assessLength', settings.assessSec, v => { settings.assessSec = Number(v); persist(); });
   $('btnAssess').addEventListener('click', startAssessment);

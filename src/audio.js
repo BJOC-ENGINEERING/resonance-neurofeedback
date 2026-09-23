@@ -77,29 +77,6 @@ export class AudioEngine {
     whiteNoise.connect(filter).connect(this.noiseGain).connect(this.masterGain);
     whiteNoise.start();
     this.noiseNode = whiteNoise;
-
-    // Breath voice: the same noise through a band-pass that opens and swells with the pacer.
-    const breath = this.ctx.createBufferSource();
-    breath.buffer = noiseBuffer;
-    breath.loop = true;
-    breath.playbackRate.value = 0.83; // decorrelate from the rain bed
-    this.breathFilter = this.ctx.createBiquadFilter();
-    this.breathFilter.type = 'bandpass';
-    this.breathFilter.Q.value = 0.8;
-    this.breathFilter.frequency.value = 400;
-    this.breathGain = this.ctx.createGain();
-    this.breathGain.gain.value = 0;
-    breath.connect(this.breathFilter).connect(this.breathGain).connect(this.masterGain);
-    breath.start();
-  }
-
-  // level: pacer lung volume 0..1, or null to silence the breath voice.
-  setBreath(level) {
-    if (!this.ctx || !this.breathGain) return;
-    const t = this.ctx.currentTime;
-    const on = level !== null && !this.muted;
-    this.breathGain.gain.setTargetAtTime(on ? 0.2 + level * 0.9 : 0, t, 0.12);
-    if (on) this.breathFilter.frequency.setTargetAtTime(260 + level * 900, t, 0.12);
   }
 
   // Soft cue for eyes-closed recordings: a rising pair to begin, a falling pair to end.

@@ -817,22 +817,25 @@ function renderProtocol() {
   const p = settings.protocol;
   const active = PRESETS.find(x => x.id === p.presetId);
   $('presets').innerHTML = PRESETS.map(x =>
-    `<button data-id="${x.id}" class="${x.id === p.presetId ? 'active' : ''}"><b>${x.name}</b><span>eyes ${x.eyes}</span></button>`).join('')
-    + `<p class="preset-blurb">${active ? active.blurb : 'Custom rules.'}</p>`;
+    `<button data-id="${x.id}" class="${x.id === p.presetId ? 'active' : ''}"><b>${x.name}</b></button>`).join('')
+    + `<p class="preset-blurb">${active ? `${active.blurb} Eyes ${active.eyes}.` : 'Custom rules.'}</p>`;
 
-  $('rules').innerHTML = MEASURES.map(m => {
+  // Only the rules in use are listed; the rest wait in the add menu.
+  $('rules').innerHTML = MEASURES.filter(m => p.rules.some(x => x.measure === m.k)).map(m => {
     const r = p.rules.find(x => x.measure === m.k);
-    const mode = r?.mode || 'off';
+    const mode = r.mode;
     return `<div class="rule ${mode === 'off' ? 'off' : ''}" data-m="${m.k}">
       <div class="name"><i style="${m.color ? `background:var(${m.color})` : ''}"></i><b>${m.label}</b><span>${m.range}</span></div>
       <div class="seg small">
-        <button data-mode="off" class="${mode === 'off' ? 'active' : ''}" title="Off">–</button>
         <button data-mode="up" class="${mode === 'up' ? 'active' : ''}" title="Reward at or above">↑</button>
         <button data-mode="down" class="${mode === 'down' ? 'active' : ''}" title="Reward at or below">↓</button>
       </div>
-      <input type="number" min="10" max="${m.absolute ? 100 : 400}" step="1" value="${r?.threshold ?? m.defaultThreshold ?? 100}" aria-label="${m.label} threshold, ${m.absolute ? 'absolute percent' : 'percent of baseline'}" title="${m.absolute ? 'absolute %' : '% of baseline'}">
+      <input type="number" min="10" max="${m.absolute ? 100 : 400}" step="1" value="${r.threshold}" aria-label="${m.label} threshold, ${m.absolute ? 'absolute percent' : 'percent of baseline'}" title="${m.absolute ? 'absolute %' : '% of baseline'}">
+      <button class="btn ghost icon del" data-mode="off" aria-label="Remove ${m.label}" title="Remove"><i class="ti ti-x" aria-hidden="true"></i></button>
     </div>`;
-  }).join('');
+  }).join('') || '<p class="empty">No rules yet. Add a measure below.</p>';
+  $('addRule').innerHTML = '<option value="">+ Add a measure</option>'
+    + MEASURES.filter(m => !p.rules.some(x => x.measure === m.k)).map(m => `<option value="${m.k}">${m.label} · ${m.range}</option>`).join('');
 
   $('holdSec').value = p.holdSec;
   $('holdLabel').textContent = p.holdSec > 0 ? `${p.holdSec.toFixed(1)} s` : 'instant reward';
@@ -863,21 +866,6 @@ function applyPreset(preset) {
 }
 
 function initProtocolPanel() {
-  $('protocolShortcuts').addEventListener('click', e => {
-    const btn = e.target.closest('button[data-section]');
-    if (!btn) return;
-    const target = $(btn.dataset.section);
-    const rail = btn.closest('.rail');
-    const behavior = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
-    const top = rail.scrollTop + target.getBoundingClientRect().top - rail.getBoundingClientRect().top
-      - rail.querySelector('.rail-nav').offsetHeight - 16;
-    target.focus({ preventScroll: true });
-    if (rail.scrollHeight > rail.clientHeight) rail.scrollTo({ top, behavior });
-    else {
-      target.style.scrollMarginTop = `${rail.querySelector('.rail-nav').offsetHeight + 16}px`;
-      target.scrollIntoView({ block: 'start', behavior });
-    }
-  });
   $('presets').addEventListener('click', e => {
     const b = e.target.closest('button');
     if (b) applyPreset(PRESETS.find(x => x.id === b.dataset.id));
@@ -888,6 +876,10 @@ function initProtocolPanel() {
     if (!b) return;
     const row = b.closest('.rule');
     commitProtocol({ rules: rulesFromDom(row.dataset.m, b.dataset.mode, Number(row.querySelector('input').value) || 100) });
+  });
+  $('addRule').addEventListener('change', e => {
+    const m = MEASURES.find(x => x.k === e.target.value);
+    if (m) commitProtocol({ rules: rulesFromDom(m.k, 'up', m.defaultThreshold ?? 100) });
   });
   $('rules').addEventListener('change', e => {
     const row = e.target.closest('.rule');
@@ -1464,7 +1456,6 @@ function init() {
     if (!b) return;
     document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('active', x === b));
     document.querySelectorAll('.tabpanel').forEach(p => p.classList.toggle('active', p.dataset.panel === b.dataset.tab));
-    $('protocolShortcuts').hidden = b.dataset.tab !== 'protocol';
     b.closest('.rail').scrollTop = 0;
   });
   initProtocolPanel();

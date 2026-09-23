@@ -33,7 +33,7 @@ The badge reads **Live Muse EEG** once connected; click it to open the Signal pa
 
 Targets are relative to your baseline: an upward target of 105% means at least 5% above baseline. Poor signal pauses the baseline or training timer and does not count toward reward.
 
-The Protocol panel keeps **Presets**, **Hold & difficulty**, **Saved**, and **Rules** shortcuts at the top as you scroll. Hold and difficulty sit together under **Make it your own**, above the rules. Use **Saved** to name and save a setup.
+In **Protocol**, the active rules sit under the presets. Add another with **+ Add a measure** and remove one with **×**. Hold and difficulty sit under **Make it your own**, and **Saved setups** names and saves the lot.
 
 Use **Space** to start or pause, **F** for fullscreen, **M** to mute, **P** to show or hide the side panels, and **?** for these docs. Open **Journal** to review sessions, add notes, or export CSV/JSON.
 

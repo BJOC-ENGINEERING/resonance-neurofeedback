@@ -46,20 +46,18 @@
       <button role="tab" data-tab="breath">Breath</button>
       <button role="tab" data-tab="signal">Signal</button>
     </nav>
-    <nav class="protocol-shortcuts" id="protocolShortcuts" aria-label="Protocol sections">
-      <button data-section="presetHeading">Presets</button>
-      <button data-section="tuningHeading">Hold &amp; difficulty</button>
-      <button data-section="savedHeading">Saved</button>
-      <button data-section="rulesHeading">Rules</button>
-    </nav>
     </div>
 
     <section class="tabpanel active" data-panel="protocol">
-      <h2 id="presetHeading" tabindex="-1">Start from a protocol</h2>
+      <h2>Start from a protocol</h2>
       <div class="presets" id="presets"></div>
 
-      <section class="protocol-tuning" aria-labelledby="tuningHeading">
-      <h3 id="tuningHeading" tabindex="-1">Make it your own</h3>
+      <h2>Rules <span class="hint">all must pass</span></h2>
+      <div class="rules" id="rules"></div>
+      <select id="addRule" class="field" aria-label="Add a rule"></select>
+
+      <section class="protocol-tuning">
+      <h3>Make it your own</h3>
       <h2>Hold <span class="hint" id="holdLabel">instant reward</span></h2>
       <input type="range" id="holdSec" min="0" max="10" step="0.5" value="0" aria-label="Hold seconds">
       <p class="note">Rules hold this long first. <a class="more" href="#" data-doc="features#protocols">Learn more</a></p>
@@ -76,15 +74,13 @@
       </div>
       </section>
 
-      <h2 id="savedHeading" tabindex="-1">Saved setups <span class="hint" id="libraryCount">0 / 24</span></h2>
+      <h2>Saved setups <span class="hint" id="libraryCount">0 / 24</span></h2>
       <div class="row">
         <input type="text" id="protocolName" maxlength="40" placeholder="Name this setup" aria-label="Protocol name">
         <button class="btn" id="btnSaveProtocol">Save</button>
       </div>
       <div class="library" id="library"></div>
 
-      <h2 id="rulesHeading" tabindex="-1">Rules <span class="hint">all enabled rules must pass</span></h2>
-      <div class="rules" id="rules"></div>
     </section>
 
     <section class="tabpanel" data-panel="timing">

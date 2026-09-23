@@ -29,7 +29,7 @@ Full feature list: [Features](docs/features.md).
 - Live spectrum (linear or dB), spectrogram, raw traces, and a 60 s reward-index strip
 - Synthetic EEG with pink noise, waxing and waning rhythms, and injectable blinks, jaw clench, mains and loose contact. It runs through the same pipeline as the headset
 - Synthetic pulse: a virtual heart whose rate swings with breathing and peaks at its own resonance rate, rendered as a 64 Hz PPG waveform for the real beat detector. Lower **Stability** makes it follow the pacer less closely
-- Session journal with per-block stats, reward timeline, notes, trend chart, CSV and JSON export. Raw EEG and PPG are never stored
+- Session journal with per-block stats, reward timeline, notes, trend chart, CSV and JSON export
 - Six palettes, fullscreen stage, keyboard shortcuts, reduced-motion support, WebMCP tools
 - All processing happens in the browser
 

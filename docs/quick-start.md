@@ -68,7 +68,7 @@ Under **Timing → Self-experiment**:
 - **Check in before and after** asks you to rate how calm and alert you feel (1–7) and runs a 60 second reaction test. When the counter appears, press **Space** or tap it as fast as you can.
 - **Blinded sham sessions** makes 1 in 3, or 1 in 2, of your sessions sham. A sham session looks and sounds normal, but its feedback replays your usual reward pattern instead of following your signal. The rule readout and coherence are hidden during every blinded session, so neither kind gives itself away. Keep the side panels folded while you train.
 
-After a blinded session you are asked whether you think it was real or sham, and only then is it revealed. **Journal → Real vs sham** compares the two kinds on how often your rules were actually met, and on the before-and-after changes. Aim for at least five of each before reading much into a difference.
+After a blinded session you are asked whether you think it was real or sham, and only then is it revealed. **Journal → Real vs sham** compares the two kinds on how often your rules were actually met, and on the before-and-after changes.
 
 ## Return to the main screen
 
@@ -81,7 +81,7 @@ The studio is the main screen. The initial welcome screen with **Try the demo** 
 
 ## Try without a headset
 
-Choose **Signal → Simulated**. Pick a simulated state and start a session to explore the feedback. This uses generated data, not readings from you.
+Choose **Signal → Simulated**. Pick a simulated state and start a session to explore the feedback.
 
 ## Connection troubleshooting
 
@@ -90,5 +90,3 @@ Choose **Signal → Simulated**. Pick a simulated state and start a session to e
 - **Paired in system settings but no signal:** connect using the app's **Connect Muse** button too.
 - **Poor signal:** adjust the fit and sensor contact, relax your jaw, and stay still. Check the Sensors card before starting.
 - **Connection lost:** reconnect, wait for good signal, and resume the paused session.
-
-EEG and pulse processing stay in your browser. Settings and session summaries are stored locally; raw EEG and PPG are not saved. Export sessions you want to keep before clearing browser data.

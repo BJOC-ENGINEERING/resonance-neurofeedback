@@ -1,6 +1,6 @@
 # Resonance features
 
-Everything runs in the browser. There is no account, no server and no upload. Raw EEG and pulse data are never stored.
+Everything runs in the browser. There is no account, no server and no upload.
 
 ## Signal
 
@@ -97,5 +97,3 @@ Everything runs in the browser. There is no account, no server and no upload. Ra
 - **WebMCP tools** for browser agents: `read_session_state`, `configure_protocol` and `configure_simulation`. Coherence is withheld during blinded sessions
 - **Keyboard:** Space starts or pauses, F toggles fullscreen, M mutes, P toggles the panels
 - **Dev hook:** in dev builds, `window.__resonance.advance(seconds)` steps the pipeline without animation frames
-
-Resonance is an educational tool, not a medical device.

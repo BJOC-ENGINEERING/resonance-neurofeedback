@@ -1326,10 +1326,9 @@ function renderComparison(history) {
     `<tr title="${tip}"><td>${label}</td><td>${fmt(c.real[key], unit, digits)}</td><td>${fmt(c.sham[key], unit, digits)}</td><td>${diff(c.real[key], c.sham[key], unit, digits)}</td></tr>`).join('');
   $('studyHint').textContent = `${c.real.n} real · ${c.sham.n} sham`;
   const g = c.guesses;
-  const few = Math.min(c.real.n, c.sham.n) < 5;
   $('studyNote').textContent = [
     g.total ? `You named the condition correctly in ${g.correct} of ${g.total} session${g.total === 1 ? '' : 's'}${g.total >= 6 ? (g.correct / g.total > 0.75 ? ', so the blind may be leaking.' : ', close to chance: the blind is holding.') : '.'}` : '',
-    few ? 'Aim for at least five of each before reading much into a difference; ± is one standard error.' : 'A difference larger than about twice its standard errors is worth taking seriously.'
+    '± is one standard error.'
   ].filter(Boolean).join(' ');
 }
 

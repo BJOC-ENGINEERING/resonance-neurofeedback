@@ -457,8 +457,16 @@ body.focus .top:hover, body.focus .top:focus-within { opacity: 1; }
   .center { order: 1; } .rail.live { order: 2; } .rail:not(.live) { order: 3; max-height: none; }
   .stage { min-height: 340px; }
   .clock .time { font-size: 32px; }
-  #btnJournal span { display: none; }
+  #btnJournal span, #btnDocs span { display: none; }
   .tiles.four { grid-template-columns: 1fr 1fr; }
+  /* The stage phase already says where you are; the steps and tagline only crowd the header. */
+  .top { gap: 10px; }
+  .steps, .open-source-note { display: none; }
+  .brand { font-size: 15px; letter-spacing: 0.16em; }
+  .stage-top { padding-right: 64px; }
+  #btnFullscreen { position: absolute; top: 12px; right: 12px; }
+  #fullscreenHint { display: none; }
+  .toast { top: 12px; bottom: auto; transform: translate(-50%, -20px); max-width: calc(100vw - 32px); border-radius: 14px; text-align: center; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
